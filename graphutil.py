@@ -1,0 +1,1816 @@
+import networkx as nx
+from tqdm import tqdm
+from pyvis.network import Network
+import pandas as pd
+import json
+from collections import defaultdict, namedtuple
+
+SequencePattern = namedtuple('SequencePattern', ['name', 'operations', 'color', 'description', 'min_length', 'strict_order', 'results'])
+ENABLE_RESULT_MATCHING = False  # Toggle to enable/disable result column matching
+ORIGINAL_CSV_PATH_TEMPLATE = "./{target_file}_raw_events_with_lineid.csv"  # Template for original CSV path
+
+ATTACK_SEQUENCE_PATTERNS = [
+    # Process creation patterns
+    SequencePattern(
+        name="Process_Creation",
+        operations=["Process Create"],
+        color="#FF3333",  # Red
+        description="Process creation operations",
+        min_length=1,
+        strict_order=False,
+        results=["SUCCESS"]  # Expected results for this pattern
+    ),
+
+    # File manipulation patterns
+    SequencePattern(
+        name="File_Creation_Write",
+        operations=["CreateFile", "WriteFile"],
+        color="#FF6600",  # Orange
+        description="File creation followed by write operations",
+        min_length=2,
+        strict_order=True,
+        results=["SUCCESS", "SUCCESS"]  
+    ),
+    SequencePattern(
+        name="File_Creation_Metadata_Write",
+        operations=["CreateFile", "QueryBasicInformationFile", "WriteFile", "CloseFile"],
+        color="#FAD000",  # Yellow
+        description="File creation with metadata query and write",
+        min_length=1,
+        strict_order=False,
+        results=["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]  
+    ),
+
+    # Registry manipulation patterns
+    SequencePattern(
+        name="Registry_Creation_Modification",
+        operations=["RegCreateKey", "RegSetValue", "RegQueryKey", "RegCloseKey"],
+        color="#34CCFF",  # Cyan
+        description="Registry key Create and modification",
+        min_length=2,
+        strict_order=False,
+        results=["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]  
+    ),
+
+    SequencePattern(
+        name="Registry_Modification",
+        operations=["RegOpenKey", "RegSetValue", "RegQueryKey", "RegCloseKey"],
+        color="#33CC33",  # Green
+        description="Registry key open and modification",
+        min_length=2,
+        strict_order=False,
+        results=["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]  
+    ),
+
+    # Network communication patterns
+    SequencePattern(
+        name="TCP_Communication",
+        operations=["TCP Connect", "TCP Send", "TCP Receive", "TCP Disconnect"],
+        color="#0066FF",  # Blue
+        description="TCP network communication sequence",
+        min_length=2,
+        strict_order=True,
+        results=["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"] 
+    ),
+    
+]
+
+
+def _get_edge_timestamp(src, dst, key, data, edge_metadata):
+    """Get timestamp from edge metadata or data"""
+    edge_meta = edge_metadata.get((src, dst, key), {})
+    return edge_meta.get('timestamp', data.get('timestamp'))
+
+def _get_edge_line_id(src, dst, key, data, edge_metadata):
+    """Get line_id from edge metadata or data"""
+    edge_meta = edge_metadata.get((src, dst, key), {})
+    return edge_meta.get('line_id', data.get('line_id'))
+
+def event_handle(e):
+    srcUUID = e["srcNode"]["UUID"]
+    srcType = e["srcNode"]["Type"]
+    srcName = e["srcNode"]["Name"]
+
+    dstUUID = e["dstNode"]["UUID"] if e["dstNode"] != None else srcUUID
+    dstType = e["dstNode"]["Type"] if e["dstNode"] != None else srcType
+    if e["dstNode"] == None:
+        dstUUID, dstType, dstName = srcUUID, srcType, srcName
+    elif e["dstNode"]["Type"] == "Process":        
+        dstName = e["dstNode"]["Name"]
+    elif e["dstNode"]["Type"] == "File":
+        dstName = e["dstNode"]["Name"]
+    elif e["dstNode"]["Type"] == "Registry":
+        dstName = e["dstNode"]["Key"]
+    elif e["dstNode"]["Type"] == "Network":
+        dstName = e["dstNode"]["Dstaddress"]    
+
+    return srcUUID, srcType, srcName, dstUUID, dstType, dstName, e["relation"], e["timestamp"], e["label"]
+
+
+def generate_query_graph(campaign_events, per_event=False, return_full_graph=False):
+    """
+    Simplified graph generation: each log entry = one edge from process to resource
+    - Source: Process (with PID)
+    - Destination: File/Registry/Network/Process
+    - Edge: Contains log entry metadata (line_id, operation, timestamp, etc.)
+    """
+    G = nx.MultiDiGraph(name="simplified_query_graph", data=True)
+    edge_metadata = {}  # Store detailed edge information
+    
+    
+    for idx, e in enumerate(campaign_events):
+        srcUUID, srcType, srcName, dstUUID, dstType, dstName, relation, timestamp, label = event_handle(e)
+        
+        # Create source process node with PID
+        src_pid = e['srcNode'].get('Pid', 0)
+        src_node_id = f"{srcName}_{src_pid}"
+        
+        # Add source process node
+        G.add_node(src_node_id, 
+                  name=srcName, 
+                  pid=src_pid,
+                  type="Process",
+                  original_uuid=srcUUID)
+        
+        # Create destination resource node
+        if dstType == "Process":
+            dst_pid = e['dstNode'].get('Pid', 0) if e['dstNode'] else 0
+            dst_node_id = f"{dstName}_{dst_pid}"
+            G.add_node(dst_node_id,
+                      name=dstName,
+                      pid=dst_pid,
+                      type="Process",
+                      original_uuid=dstUUID)
+        else:
+            # For File/Registry/Network, use the resource name/path as identifier
+            if dstType == "Registry":
+                dst_resource_key = e['dstNode'].get('Key', dstName) if e['dstNode'] else dstName
+            elif dstType == "Network":
+                dst_resource_key = e['dstNode'].get('Dstaddress', dstName) if e['dstNode'] else dstName
+            else:  # File or other
+                dst_resource_key = dstName
+                
+            dst_node_id = f"{dst_resource_key}_{dstType}"
+            G.add_node(dst_node_id,
+                      name=dstName,
+                      resource_key=dst_resource_key,
+                      type=dstType,
+                      original_uuid=dstUUID)
+        
+        # Create edge representing this log entry
+        line_id = e.get('line_id', str(idx))
+        edge_key = (src_node_id, dst_node_id, idx)  # Use index as edge key for multi-edges
+        
+        # Add edge with comprehensive metadata
+        G.add_edge(src_node_id, dst_node_id, key=idx,
+                  line_id=line_id,
+                  operation=relation,
+                  timestamp=timestamp,
+                  technique=label,
+                  time_order=idx,
+                  edge_type="log_entry")
+        
+        # Store detailed edge metadata for analysis
+        edge_metadata[edge_key] = {
+            'line_id': line_id,
+            'operation': relation,
+            'timestamp': timestamp,
+            'technique': label,
+            'src_process': srcName,
+            'src_pid': src_pid,
+            'dst_resource': dstName,
+            'dst_type': dstType,
+            'original_event': e
+        }
+
+    
+    # Count node types for summary
+    node_types = {}
+    for node, data in G.nodes(data=True):
+        node_type = data.get('type', 'Unknown')
+        node_types[node_type] = node_types.get(node_type, 0) + 1
+    
+    
+    return G, edge_metadata
+
+
+
+# Function: Apply REAPr labeling to simplified graph (per-event, selective src/dst marking)
+def apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs):
+    """
+    Apply REAPr-inspired labeling to simplified graph (one edge per log entry).
+    Each spec is (lineid, 'src'/'dst'/'both') to mark only source or destination node as malicious.
+    """
+    # Initialize labels for all nodes
+    for node in G.nodes():
+        G.nodes[node]['reapr_label'] = 'BENIGN'
+        G.nodes[node]['is_root_cause'] = False
+        G.nodes[node]['is_impact'] = False
+        G.nodes[node]['is_known_malicious'] = False
+        G.nodes[node]['malicious_operations'] = []
+
+    malicious_processes = set()
+    malicious_resources = set()
+    matched_edges = []
+    root_cause_nodes = set()
+    impact_nodes = set()
+
+    # Normalize specs to (lineid, target) tuples
+    normalized_specs = []
+    for spec in malicious_specs:
+        if isinstance(spec, (tuple, list)) and len(spec) == 2:
+            lineid, target = spec
+            normalized_specs.append((str(lineid), target.lower()))
+        else:
+            normalized_specs.append((str(spec), 'both'))
+
+    # Mark nodes as malicious according to specs
+    for edge_key, meta in edge_metadata.items():
+        line_id = str(meta.get('line_id', ''))
+        src_node = meta.get('src_process', '')
+        src_pid = meta.get('src_pid', 0)
+        dst_node = meta.get('dst_resource', '')
+        dst_type = meta.get('dst_type', '')
+
+        src_node_id = edge_key[0]
+        dst_node_id = edge_key[1]
+
+        for spec_lineid, target in normalized_specs:
+            if line_id == spec_lineid:
+                if target in ['src', 'both'] and src_node_id in G:
+                    G.nodes[src_node_id]['reapr_label'] = 'ROOT_CAUSE'
+                    G.nodes[src_node_id]['is_root_cause'] = True
+                    G.nodes[src_node_id]['is_known_malicious'] = True
+                    malicious_processes.add(src_node_id)
+                    op_details = {
+                        'line_id': line_id,
+                        'operation': meta.get('operation', ''),
+                        'target_type': dst_type,
+                        'target_name': dst_node,
+                        'marked_as': 'src'
+                    }
+                    G.nodes[src_node_id]['malicious_operations'].append(op_details)
+                    root_cause_nodes.add(src_node_id)
+                if target in ['dst', 'both'] and dst_node_id in G:
+                    G.nodes[dst_node_id]['reapr_label'] = 'MALICIOUS'
+                    G.nodes[dst_node_id]['is_known_malicious'] = True
+                    malicious_resources.add(dst_node_id)
+                    op_details = {
+                        'line_id': line_id,
+                        'operation': meta.get('operation', ''),
+                        'target_type': dst_type,
+                        'target_name': dst_node,
+                        'marked_as': 'dst'
+                    }
+                    G.nodes[dst_node_id]['malicious_operations'].append(op_details)
+                    impact_nodes.add(dst_node_id)
+                matched_edges.append(edge_key)
+
+    if not malicious_processes and not malicious_resources:
+        raise ValueError("No known malicious events found in the simplified graph. Check the LineIDs or edge metadata.")
+
+
+    # Forward contamination trace from root cause nodes
+    contaminated_nodes = set()
+    for root in root_cause_nodes:
+        visited = set()
+        queue = [root]
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+            visited.add(current)
+            contaminated_nodes.add(current)
+            for successor in G.successors(current):
+                if successor not in visited:
+                    queue.append(successor)
+
+    # Backward trace from impact nodes (standard REAPr methodology)
+    backward_traced_nodes = set()
+    for impact in impact_nodes:
+        visited = set()
+        queue = [impact]
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+            visited.add(current)
+            backward_traced_nodes.add(current)
+            # Only traverse through process nodes for backward trace
+            for predecessor in G.predecessors(current):
+                if predecessor not in visited and G.nodes[predecessor].get('type') == 'Process':
+                    queue.append(predecessor)
+    
+    # Find intersection of forward and backward traces (true attack path)
+    attack_path_nodes = contaminated_nodes.intersection(backward_traced_nodes)
+    
+    print(f"REAPr Analysis:")
+    print(f"  Forward contaminated: {len(contaminated_nodes)}")
+    print(f"  Backward traced: {len(backward_traced_nodes)}")
+    print(f"  Attack path intersection: {len(attack_path_nodes)}")
+
+
+    # Apply REAPr labeling rules following standard methodology
+    for node in G.nodes():
+        if node in root_cause_nodes or node in impact_nodes:
+            print(f"REAPr Labeling Node: {node} - {G.nodes[node]['reapr_label']}")
+            # Keep original root cause/malicious labels for explicitly marked nodes
+            if G.nodes[node]['reapr_label'] != 'ROOT_CAUSE':
+                G.nodes[node]['reapr_label'] = 'MALICIOUS'
+        elif node in attack_path_nodes:
+            # Nodes in the intersection of forward and backward traces are the true attack path
+            print(f"REAPr Labeling Node: {node} - MALICIOUS (attack path)")
+            G.nodes[node]['reapr_label'] = 'MALICIOUS'
+            G.nodes[node]['is_attack_path'] = True
+        elif node in contaminated_nodes:
+            # Nodes only in forward trace are contaminated
+            G.nodes[node]['reapr_label'] = 'CONTAMINATED'
+
+
+    # count the number of each label
+    label_counts = {}
+    for node, data in G.nodes(data=True):
+        label = data.get('reapr_label', 'BENIGN')
+        label_counts[label] = label_counts.get(label, 0) + 1
+    print(f"REAPr Label Counts: {label_counts}")
+
+    return list(malicious_processes), list(malicious_resources), contaminated_nodes, impact_nodes
+
+
+# Corrected visualization function for simplified graph
+def create_reapr_visualization(G, edge_metadata, malicious_specs, output_path, show_contaminated=False, show_only_malicious=True):
+    """Create REAPr visualization showing ONLY malicious and contaminated nodes (filtered view) for simplified graph"""
+    # Apply selective labeling for simplified graph
+    malicious_processes, malicious_resources, contaminated, impacts = apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs)
+    
+    # Filter graph to show only malicious and contaminated nodes if requested
+    if show_only_malicious:
+        malicious_nodes = set()
+        for node, data in G.nodes(data=True):
+            label = data.get('reapr_label', 'BENIGN')
+            if label in ['MALICIOUS', 'ROOT_CAUSE']:
+                malicious_nodes.add(node)
+
+        print(f"Filtered graph to show only malicious nodes: {len(malicious_nodes)} nodes")
+        G_filtered = G.subgraph(malicious_nodes).copy()
+    elif show_contaminated:
+        relevant_nodes = set()
+        for node, data in G.nodes(data=True):
+            label = data.get('reapr_label', 'BENIGN')
+            if label in ['MALICIOUS', 'ROOT_CAUSE', 'CONTAMINATED']:
+                relevant_nodes.add(node)
+        # Also include nodes connected to relevant nodes to show attack paths
+        extended_nodes = set(relevant_nodes)
+        for node in relevant_nodes:
+            extended_nodes.update(G.predecessors(node))
+            extended_nodes.update(G.successors(node))
+        # Create subgraph with only relevant nodes
+        G_filtered = G.subgraph(extended_nodes).copy()
+        print(f"Filtered graph: {G_filtered.number_of_nodes()} nodes, {G_filtered.number_of_edges()} edges (from {G.number_of_nodes()} total)")
+    else:
+        G_filtered = G
+    
+    net = Network(notebook=True, height="900px", width="100%", bgcolor="#ffffff", directed=True)
+
+    # print the number of nodes and edges in the filtered graph
+    print(f"Filtered graph: {G_filtered.number_of_nodes()} nodes, {G_filtered.number_of_edges()} edges (from {G.number_of_nodes()} total)")
+    
+    # Manually add all nodes with enhanced styling (avoiding net.from_nx() to preserve duplicate edges)
+    for node, data in G_filtered.nodes(data=True):
+        node_type = data.get('type', 'Unknown')
+        node_name = data.get('name', 'Unknown')
+        label = data.get('reapr_label', 'BENIGN')
+        is_known_malicious = data.get('is_known_malicious', False)
+        malicious_ops = data.get('malicious_operations', [])
+        
+        # Base styling by node type
+        if node_type == 'Process':
+            base_color = '#90EE90'  # Light green
+            size = 20
+            title = f"Process: {node_name}"
+        elif node_type == 'Registry':
+            base_color = '#87CEEB'  # Sky blue
+            size = 15
+            title = f"Registry: {node_name}"
+        elif node_type == 'File':
+            base_color = '#DDA0DD'  # Plum
+            size = 15
+            title = f"File: {node_name}"
+        elif node_type == 'Network':
+            base_color = '#F0E68C'  # Khaki
+            size = 15
+            title = f"Network: {node_name}"
+        else:
+            base_color = '#D3D3D3'  # Light gray
+            size = 12
+            title = f"Unknown: {node_name}"
+        
+        # Override color based on REAPr status
+        if label == 'ROOT_CAUSE' or (label == 'MALICIOUS' and is_known_malicious):
+            color = '#8B0000'  # Dark red for known malicious
+            size += 15
+            border_width = 6
+            border_color = '#000000'
+            title = f"KNOWN MALICIOUS {node_type}: {node_name}"
+        elif label == 'MALICIOUS':
+            color = '#FF4444'  # Red for other malicious
+            size += 10
+            border_width = 4
+            border_color = '#8B0000'
+            title = f"MALICIOUS {node_type}: {node_name}"
+        elif label == 'CONTAMINATED':
+            color = '#FFA500'  # Orange for contaminated
+            size += 5
+            border_width = 3
+            border_color = '#FF4500'
+            title = f"CONTAMINATED {node_type}: {node_name}"
+        else:
+            color = base_color
+            border_width = 1
+            border_color = '#666666'
+        
+        # Add malicious operation details to title
+        if malicious_ops:
+            title += f"\n\nMalicious Operations:"
+            for op in malicious_ops:
+                marked_as = op.get('marked_as', 'both')
+                title += f"\n  • {op['operation']} -> {op['target_type']}: {op['target_name']} (marked as {marked_as})"
+        
+        # Impact node styling
+        if G_filtered.nodes[node].get('is_impact'):
+            border_width = max(border_width, 4)
+            border_color = '#800080'  # Purple border for impact nodes
+        
+        net.add_node(node, 
+                    label=node_name, 
+                    title=f"{label} {node_type}: {node_name}",
+                    color=color, 
+                    size=size,
+                    borderWidth=border_width,
+                    borderColor=border_color)
+    
+    # Manually add ALL edges to preserve duplicates (similar to malicious_edge_visualization)
+    edge_count = {}  # Track multiple edges between same nodes
+    for edge_idx, (src, dst, key, data) in enumerate(G_filtered.edges(keys=True, data=True)):
+        # Create unique edge identifier
+        edge_pair = (src, dst)
+        edge_count[edge_pair] = edge_count.get(edge_pair, 0) + 1
+        n = edge_count[edge_pair]
+        
+        # Get edge metadata
+        line_id = data.get('line_id', 'N/A')
+        operation = data.get('operation', 'unknown')
+        timestamp = data.get('timestamp', 'N/A')
+
+        unique_id = f"{src}¡÷{dst}#{key}_{edge_idx}"
+        
+        # Create edge label showing which occurrence this is
+        if n > 1:
+            edge_label = f"{operation} #{n} (line {line_id})"
+        else:
+            edge_label = f"{operation} (line {line_id})"
+        
+        
+        
+        # Enhanced edge styling based on malicious content
+        malicious_line_ids = [spec[0] for spec in malicious_specs if isinstance(spec, (tuple, list))]
+        
+        # Check if both src and dst nodes are malicious
+        src_is_malicious = G_filtered.nodes[src].get('reapr_label', 'BENIGN') in ['MALICIOUS', 'ROOT_CAUSE']
+        dst_is_malicious = G_filtered.nodes[dst].get('reapr_label', 'BENIGN') in ['MALICIOUS', 'ROOT_CAUSE']
+        
+        if src_is_malicious and dst_is_malicious:
+            edge_color = {'color': '#8B0000', 'opacity': 1.0}
+            edge_width = 8 if line_id in malicious_line_ids else 3
+            edge_title = f'Malicious-to-Malicious: {edge_label}\nLine ID: {line_id}\nTimestamp: {timestamp}'
+        elif any(resource_type in edge_label for resource_type in ['Registry', 'File', 'Network']):
+            edge_color = {'color': '#4169E1', 'opacity': 0.7}
+            edge_width = 3
+            edge_title = f'Shared resource: {edge_label}\nLine ID: {line_id}\nTimestamp: {timestamp}'
+        else:
+            edge_color = {'color': '#666666', 'opacity': 0.6}
+            edge_width = 2 + (n % 3)  # Vary width slightly for multiple edges
+            edge_title = f'Operation: {operation}\nLine ID: {line_id}\nKey: {key}\nTimestamp: {timestamp}'
+        
+        # Per-edge smooth settings to separate parallel edges
+        smooth_type = 'curvedCW' if (n % 2 == 1) else 'curvedCCW'
+        roundness = min(0.6, 0.15 + 0.08 * (n - 1))
+        smooth = {"enabled": True, "type": smooth_type, "roundness": roundness}
+        
+        # Add edge with unique ID and properties to force pyvis to show it separately
+        net.add_edge(src, dst, 
+                    id=unique_id,  # Unique ID forces separate edges
+                    label=edge_label,
+                    title=edge_title,
+                    color=edge_color,
+                    width=edge_width,
+                    smooth=smooth)
+    # Set visualization options (enable free 2D movement by disabling hierarchical layout)
+    net.set_options("""
+    var options = {
+      "layout": {
+        "improvedLayout": true,
+        "hierarchical": {
+          "enabled": false
+        }
+      },
+      "physics": {
+        "enabled": true,
+        "forceAtlas2Based": {
+          "gravitationalConstant": -50,
+          "centralGravity": 0.01,
+          "springLength": 200,
+          "springConstant": 0.08
+        },
+        "maxVelocity": 50,
+        "solver": "forceAtlas2Based",
+        "timestep": 0.35,
+        "stabilization": {
+          "enabled": true,
+          "iterations": 150,
+          "updateInterval": 50,
+          "onlyDynamicEdges": false,
+          "fit": true
+        },
+        "adaptiveTimestep": true
+      },
+      "nodes": {
+        "font": {"size": 12, "color": "#000000"}
+      },
+      "edges": {
+        "font": {"size": 10}
+      }
+    }
+    """)
+    net.show(output_path)
+    
+    # Add JavaScript to disable physics after stabilization for free movement
+    with open(output_path, 'r') as f:
+        html_content = f.read()
+    
+    # Insert the physics disabling JavaScript
+    html_content = html_content.replace(
+        '</script>',
+        '''
+        // Disable physics after stabilization to allow free movement
+        network.on("stabilizationIterationsDone", function () {
+            network.setOptions({physics: {enabled: false}});
+            console.log("Physics disabled after stabilization - nodes can now be moved freely");
+        });
+        
+        // Fallback: disable physics after 10 seconds regardless
+        setTimeout(function() {
+            network.setOptions({physics: {enabled: false}});
+            console.log("Physics disabled after timeout - nodes can now be moved freely");
+        }, 10000);
+        </script>'''
+    )
+    
+    with open(output_path, 'w') as f:
+        f.write(html_content)
+    
+    return output_path
+
+
+def analyze_attack_patterns(G, node2events):
+    """Analyze attack patterns following REAPr methodology"""
+    
+    print("=== REAPr Attack Pattern Analysis ===\n")
+    
+    # 1. Process genealogy analysis
+    process_chains = []
+    for node, data in G.nodes(data=True):
+        if data.get('type') == 'TTP' and data.get('reapr_label') != 'BENIGN':
+            proc_name = data.get('proc_name', 'Unknown')
+            label = data.get('reapr_label', 'BENIGN')
+            process_chains.append((node, proc_name, label))
+    
+    print(f"1. Process Chain Analysis:")
+    print(f"   Total suspicious processes: {len(process_chains)}")
+    
+    # Group by process name
+    proc_groups = {}
+    for node, proc_name, label in process_chains:
+        if proc_name not in proc_groups:
+            proc_groups[proc_name] = []
+        proc_groups[proc_name].append((node, label))
+    
+    for proc_name, instances in proc_groups.items():
+        root_count = sum(1 for _, label in instances if label == 'ROOT_CAUSE')
+        contam_count = sum(1 for _, label in instances if label == 'CONTAMINATED')
+        print(f"   - {proc_name}: {root_count} root cause(s), {contam_count} contaminated")
+    
+    # 2. Attack technique frequency
+    print(f"\n2. Attack Technique Frequency:")
+    technique_freq = {}
+    for events_list in node2events.values():
+        for event in events_list:
+            technique = event.get('label', 'Unknown')
+            technique_freq[technique] = technique_freq.get(technique, 0) + 1
+    
+    sorted_techniques = sorted(technique_freq.items(), key=lambda x: x[1], reverse=True)
+    for technique, count in sorted_techniques[:10]:  # Top 10
+        print(f"   - {technique}: {count} occurrences")
+    
+    # 3. Attack progression timeline
+    print(f"\n3. Attack Progression Analysis:")
+    all_events = []
+    for ttp_node, events_list in node2events.items():
+        for event in events_list:
+            all_events.append({
+                'timestamp': event['timestamp'],
+                'ttp_node': ttp_node,
+                'technique': event.get('label', 'Unknown'),
+                'relation': event['relation']
+            })
+    
+    all_events.sort(key=lambda x: x['timestamp'])
+    if all_events:
+        start_time = all_events[0]['timestamp']
+        end_time = all_events[-1]['timestamp']
+        duration = end_time - start_time
+        print(f"   - Attack duration: {duration} seconds ({duration/60:.1f} minutes)")
+        print(f"   - Total events: {len(all_events)}")
+        print(f"   - Events per minute: {len(all_events)/(duration/60 + 1):.1f}")
+    
+    return process_chains, technique_freq, all_events
+
+def export_reapr_labels(G, output_path="./Dataset/QueryGraph/GenerateCampaign/reapr_labels.csv"):
+    """Export REAPr-style labels in CSV format compatible with their methodology"""
+    labels_data = []
+    for node, data in G.nodes(data=True):
+        # Only include nodes with 'time_order' key
+        if 'time_order' in data:
+            labels_data.append({
+                'uuid': node,
+                'name': data.get('proc_name', data.get('name', 'Unknown')),
+                'type': data.get('type', 'Unknown'),
+                'reapr_label': data.get('reapr_label', 'BENIGN'),
+                'is_root_cause': data.get('is_root_cause', False),
+                'is_impact': data.get('is_impact', False),
+                'time_order': data.get('time_order', 0)
+            })
+    if not labels_data:
+        print("No nodes with 'time_order' found. Exporting all nodes without sorting.")
+        for node, data in G.nodes(data=True):
+            labels_data.append({
+                'uuid': node,
+                'name': data.get('proc_name', data.get('name', 'Unknown')),
+                'type': data.get('type', 'Unknown'),
+                'reapr_label': data.get('reapr_label', 'BENIGN'),
+                'is_root_cause': data.get('is_root_cause', False),
+                'is_impact': data.get('is_impact', False),
+                'time_order': 0
+            })
+    df = pd.DataFrame(labels_data)
+    if 'time_order' in df.columns:
+        df = df.sort_values('time_order')
+    df.to_csv(output_path, index=False)
+    print(f"REAPr labels exported to: {output_path}")
+    print(f"Total labeled entities: {len(df)}")
+    print(f"Label distribution:")
+    print(df['reapr_label'].value_counts())
+    return output_path
+
+
+# Utility: List all inbound and outbound edges for a given node in the graph
+def list_node_edges(G, node):
+    """
+    Given a node, list all its outbound and inbound edges with metadata.
+    Returns:
+        - outbound_edges: list of (src, dst, key, edge_data)
+        - inbound_edges: list of (src, dst, key, edge_data)
+    """
+    outbound_edges = []
+    inbound_edges = []
+    # Outbound edges: edges where node is the source
+    for _, dst, key, data in G.out_edges(node, keys=True, data=True):
+        outbound_edges.append((node, dst, key, data))
+    # Inbound edges: edges where node is the destination
+    for src, _, key, data in G.in_edges(node, keys=True, data=True):
+        inbound_edges.append((src, node, key, data))
+    return outbound_edges, inbound_edges
+
+
+def create_malicious_edge_visualization(G, edge_metadata, malicious_specs, output_path="./Dataset/QueryGraph/GenerateCampaign/malicious_edges.html"):
+    """
+    Create pyvis visualization that shows ALL edges between explicitly malicious nodes only.
+    Excludes contaminated nodes - focuses on direct attack connections only.
+    Merged to virtualization, just for archive purposes.
+    """
+
+    # First, apply REAPr labeling to identify malicious nodes
+    malicious_processes, malicious_resources, contaminated, impacts = apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs)
+    
+    # Collect only explicitly malicious nodes (exclude contaminated)
+    malicious_nodes = set()
+    for node, data in G.nodes(data=True):
+        label = data.get('reapr_label', 'BENIGN')
+        if label in ['MALICIOUS', 'ROOT_CAUSE']:
+            malicious_nodes.add(node)
+    
+    print(f"Found {len(malicious_nodes)} explicitly malicious nodes (excluding contaminated)")
+    
+    # Create network - IMPORTANT: Set directed=True for directed edges
+    net = Network(notebook=True, height="800px", width="100%", bgcolor="#ffffff", directed=True)
+    
+    for node in malicious_nodes:
+        data = G.nodes[node]
+        node_type = data.get('type', 'Unknown')
+        node_name = data.get('name', 'Unknown')
+        label = data.get('reapr_label', 'BENIGN')
+        is_known_malicious = data.get('is_known_malicious', False)
+        
+        if label == 'ROOT_CAUSE' or (label == 'MALICIOUS' and is_known_malicious):
+            color = '#8B0000'  # Dark red for known malicious
+            size = 30
+            border_color = '#000000'
+            border_width = 6
+        elif label == 'MALICIOUS':
+            color = '#FF4444'  # Red for other malicious
+            size = 25
+            border_color = '#8B0000'
+            border_width = 4
+        elif label == 'CONTAMINATED':
+            color = '#FFA500'  # Orange for contaminated
+            size = 20
+            border_color = '#FF4500'
+            border_width = 3
+        else:
+            color = '#D3D3D3'  # Gray fallback
+            size = 15
+            border_color = '#666666'
+            border_width = 1
+        
+        net.add_node(node, 
+                    label=node_name, 
+                    title=f"{label} {node_type}: {node_name}",
+                    color=color, 
+                    size=size,
+                    borderWidth=border_width,
+                    borderColor=border_color)
+    
+    # Add ALL edges between malicious nodes
+    # Critically track edges by their actual NetworkX key, not just src/dst pair
+    edge_keys = {}  # Track edges by src, dst, and key
+    malicious_edge_count = 0
+    
+    # Get all edges between malicious nodes to check total count
+    malicious_edges = []
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        if src in malicious_nodes and dst in malicious_nodes:
+            malicious_edges.append((src, dst, key, data))
+    
+    print(f"Found {len(malicious_edges)} total edges between malicious nodes")
+    
+    # Add each edge with unique properties to ensure they all display
+    for edge_idx, (src, dst, key, data) in enumerate(malicious_edges):
+        # Get edge metadata
+        line_id = data.get('line_id', 'N/A')
+        operation = data.get('operation', 'unknown')
+        timestamp = data.get('timestamp', 'N/A')
+        technique = data.get('technique', 'N/A')
+        
+        # Create a truly unique ID for each edge
+        unique_id = f"{src}¡÷{dst}#{key}_{edge_idx}"
+        
+        # Create a unique visual pattern for this edge
+        edge_num = edge_idx + 1  # 1-based edge number
+        
+        # Create distinct labels for each edge
+        if edge_idx > 0:
+            edge_label = f"{operation} #{edge_num}"
+        else:
+            edge_label = f"{operation}"
+        
+        edge_color = '#FF0000' 
+
+        edge_width = 2 
+        
+        # Create dramatically different curve patterns for each edge
+        # Higher roundness and alternating curve direction for each edge
+        direction = 'curvedCW' if (edge_idx % 2 == 0) else 'curvedCCW'
+        roundness = 0.2 + (0.15 * edge_idx)  # Increasingly curved
+        
+        # Set up the edge options - CRITICAL for multiple edge visibility
+        smooth = {
+            "enabled": True,
+            "type": direction,
+            "roundness": roundness,
+            "forceDirection": direction
+        }
+        
+        # Add the edge with its unique properties
+        net.add_edge(
+            src, 
+            dst,
+            id=unique_id,  # Unique ID per edge 
+            title=f"Operation: {operation}\nLine ID: {line_id}\nKey: {key}\nEdge #{edge_num}\nTimestamp: {timestamp}",
+            label=edge_label,
+            color=edge_color,
+            width=edge_width,
+            smooth=smooth,
+            # Add additional uniqueness to prevent edge merging
+
+        )
+        
+        print(f"Added edge {edge_idx+1}: {src} ¡÷ {dst} ({edge_label}) with ID {unique_id}")
+        malicious_edge_count += 1
+    
+    # Explicitly set options to ensure multiple edges show up (enable free 2D movement)
+    net.set_options("""
+    var options = {
+      "configure": {
+        "enabled": true
+      },
+      "interaction": {
+        "multiselect": true,
+        "hover": true
+      },
+      "layout": {
+        "improvedLayout": true,
+        "hierarchical": {
+          "enabled": false
+        }
+      },
+      "physics": {
+        "enabled": true,
+        "forceAtlas2Based": {
+          "gravitationalConstant": -50,
+          "centralGravity": 0.01,
+          "springLength": 200,
+          "springConstant": 0.08
+        },
+        "maxVelocity": 50,
+        "solver": "forceAtlas2Based",
+        "timestep": 0.35,
+        "stabilization": {
+          "enabled": true,
+          "iterations": 150,
+          "updateInterval": 50,
+          "onlyDynamicEdges": false,
+          "fit": true
+        },
+        "adaptiveTimestep": true
+      },
+      "nodes": {
+        "font": {"size": 12, "color": "#000000"}
+      },
+      "edges": {
+        "font": {"size": 10, "color": "#000000"},
+        "smooth": {
+          "enabled": true,
+          "type": "dynamic",
+          "roundness": 0.5
+        },
+        "scaling": {
+          "min": 1,
+          "max": 5
+        },
+        "arrows": {
+          "to": {
+            "enabled": true,
+            "scaleFactor": 0.5
+          }
+        },
+        "color": {
+          "inherit": false
+        },
+        "selfReference": {
+          "size": 20,
+          "angle": 0.7
+        }
+      }
+    }
+    """)
+    
+    net.show(output_path)
+    
+    # Add JavaScript to disable physics after stabilization for free movement
+    with open(output_path, 'r') as f:
+        html_content = f.read()
+    
+    # Insert the physics disabling JavaScript
+    html_content = html_content.replace(
+        '</script>',
+        '''
+        // Disable physics after stabilization to allow free movement
+        network.on("stabilizationIterationsDone", function () {
+            network.setOptions({physics: {enabled: false}});
+            console.log("Physics disabled after stabilization - nodes can now be moved freely");
+        });
+        
+        // Fallback: disable physics after 10 seconds regardless
+        setTimeout(function() {
+            network.setOptions({physics: {enabled: false}});
+            console.log("Physics disabled after timeout - nodes can now be moved freely");
+        }, 10000);
+        </script>'''
+    )
+    
+    with open(output_path, 'w') as f:
+        f.write(html_content)
+    
+    print(f"Added {len(malicious_nodes)} explicitly malicious nodes and {malicious_edge_count} edges between them")
+    print(f"Visualization saved to disk - view in browser for best results")
+    return output_path
+
+# Helper functions for edge metadata access and sequence matching
+def _get_edge_timestamp(src, dst, key, data, edge_metadata):
+    """Get timestamp from edge metadata or data"""
+    edge_meta = edge_metadata.get((src, dst, key), {})
+    return edge_meta.get('timestamp', data.get('timestamp'))
+
+def _get_edge_line_id(src, dst, key, data, edge_metadata):
+    """Get line_id from edge metadata or data"""
+    edge_meta = edge_metadata.get((src, dst, key), {})
+    return edge_meta.get('line_id', data.get('line_id'))
+
+def load_original_csv_data(target_file, csv_path_template=None):
+    """
+    Load original CSV data to access additional columns like 'Result'
+    
+    Args:
+        target_file: Target file identifier
+        csv_path_template: Template string for CSV path
+    
+    Returns:
+        dict: mapping line_id -> row data, or None if file not found
+    """
+    # Since this is mainly for result matching which we don't use heavily,
+    # return None for now
+    return None
+
+def slice_graph_by_entry_count(G, edge_metadata, start_entry=0, end_entry=100):
+    """
+    Create a subgraph containing only edges within a specific entry range
+    
+    Args:
+        G: NetworkX MultiDiGraph
+        edge_metadata: dict mapping (src,dst,key) -> metadata
+        start_entry: starting entry index (inclusive)
+        end_entry: ending entry index (exclusive)
+    
+    Returns:
+        NetworkX MultiDiGraph: subgraph with edges in the specified range
+    """
+    # Create a new graph
+    subgraph = nx.MultiDiGraph()
+    
+    # Get all edges with their timestamps/order
+    edge_list = []
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        edge_meta = edge_metadata.get((src, dst, key), {})
+        time_order = data.get('time_order', 0)
+        edge_list.append((time_order, src, dst, key, data))
+    
+    # Sort by time order
+    edge_list.sort(key=lambda x: x[0])
+    
+    # Select edges in the specified range
+    selected_edges = edge_list[start_entry:end_entry]
+    
+    # Add selected edges and their nodes to the subgraph
+    for time_order, src, dst, key, data in selected_edges:
+        # Add nodes if they don't exist
+        if not subgraph.has_node(src):
+            subgraph.add_node(src, **G.nodes[src])
+        if not subgraph.has_node(dst):
+            subgraph.add_node(dst, **G.nodes[dst])
+        
+        # Add edge
+        subgraph.add_edge(src, dst, key=key, **data)
+    
+    return subgraph
+
+def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=None, output_path="interactive_entry_graph.html", sequence_patterns=None):
+    """
+    Create an interactive visualization of the graph with entry-based analysis and sequence grouping
+    
+    Args:
+        G: NetworkX MultiDiGraph
+        edge_metadata: dict mapping (src,dst,key) -> metadata
+        malicious_specs: list of (line_id, type) tuples for malicious entries
+        output_path: path to save the HTML file
+        sequence_patterns: list of SequencePattern objects for sequence detection
+    
+    Returns:
+        str: path to the created HTML file
+    """
+    from pyvis.network import Network
+    from collections import defaultdict
+    
+    # Import sequence patterns if not provided
+    if sequence_patterns is None:
+        try:
+            # Try to import from notebook context
+            sequence_patterns = ATTACK_SEQUENCE_PATTERNS
+        except:
+            # Define basic patterns if not available
+            from collections import namedtuple
+            SequencePattern = namedtuple('SequencePattern', ['name', 'operations', 'color', 'description', 'min_length', 'strict_order', 'results'])
+            sequence_patterns = [
+                SequencePattern(
+                    name="Process_Creation",
+                    operations=["Process Create"],
+                    color="#FF3333",
+                    description="Process creation operations",
+                    min_length=1,
+                    strict_order=False,
+                    results=["SUCCESS"]
+                ),
+                SequencePattern(
+                    name="File_Creation_Write",
+                    operations=["CreateFile", "WriteFile"],
+                    color="#FF6600",
+                    description="File creation followed by write operations",
+                    min_length=2,
+                    strict_order=True,
+                    results=["SUCCESS", "SUCCESS"]
+                ),
+                SequencePattern(
+                    name="Registry_Modification",
+                    operations=["RegOpenKey", "RegSetValue", "RegQueryKey", "RegCloseKey"],
+                    color="#33CC33",
+                    description="Registry key open and modification",
+                    min_length=2,
+                    strict_order=False,
+                    results=["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]
+                )
+            ]
+    
+    # Find sequence groups for this graph
+    print(f"🔍 Analyzing sequence patterns in graph...")
+    sequence_groups = find_sequence_groups(G, edge_metadata, sequence_patterns=sequence_patterns)
+    
+    # Apply sequence coloring to graph edges
+    edge_to_group = {}
+    for group_id, group_info in sequence_groups.items():
+        for edge in group_info['edges']:
+            edge_to_group[edge] = group_id
+    
+    # Get all edges sorted by time order for entry interval functionality
+    all_edges = []
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        edge_meta = edge_metadata.get((src, dst, key), {})
+        time_order = data.get('time_order', 0)
+        
+        # Apply sequence group info to edge
+        edge_tuple = (src, dst, key)
+        if edge_tuple in edge_to_group:
+            group_id = edge_to_group[edge_tuple]
+            group_info = sequence_groups[group_id]
+            sequence_pattern = group_info['pattern'].name
+            sequence_color = group_info['pattern'].color
+            sequence_confidence = group_info['confidence']
+            sequence_description = group_info['pattern'].description
+        else:
+            sequence_pattern = 'Ungrouped'
+            sequence_color = '#CCCCCC'
+            sequence_confidence = 0.0
+            sequence_description = 'No pattern match'
+        
+        all_edges.append({
+            'time_order': time_order,
+            'src': src,
+            'dst': dst,
+            'key': key,
+            'data': data,
+            'metadata': edge_meta,
+            'sequence_pattern': sequence_pattern,
+            'sequence_color': sequence_color,
+            'sequence_confidence': sequence_confidence,
+            'sequence_description': sequence_description
+        })
+    
+    # Sort by time order
+    all_edges.sort(key=lambda x: x['time_order'])
+    total_entries = len(all_edges)
+    
+    # Create network visualization with smaller height to make room for controls
+    net = Network(notebook=True, height="600px", width="100%", bgcolor="#ffffff", directed=True)
+    
+    # Track malicious entities if specs provided
+    malicious_line_ids = set()
+    if malicious_specs:
+        malicious_line_ids = {spec[0] for spec in malicious_specs}
+    
+    # Create mapping of all nodes and edges for dynamic filtering
+    all_nodes = {}
+    all_edge_data = {}
+    
+    # Prepare node data
+    for node, data in G.nodes(data=True):
+        node_type = data.get('type', 'Unknown')
+        node_name = data.get('name', 'Unknown')
+        
+        # Check if this node is involved in malicious activities
+        is_malicious = False
+        if malicious_specs:
+            # Check if any edge involving this node has a malicious line_id
+            for edge_info in all_edges:
+                if (edge_info['src'] == node or edge_info['dst'] == node):
+                    line_id = edge_info['metadata'].get('line_id', '')
+                    if str(line_id) in malicious_line_ids:
+                        is_malicious = True
+                        break
+        
+        # Node styling
+        if is_malicious:
+            if node_type == 'Process':
+                color = '#FF0000'  # Red for malicious processes
+                size = 25
+            else:
+                color = '#FF4400'  # Orange for malicious resources
+                size = 20
+        else:
+            # Default node coloring by type
+            if node_type == 'Process':
+                color = '#90EE90'  # Light green
+                size = 20
+            elif node_type == 'Registry':
+                color = '#87CEEB'  # Sky blue
+                size = 15
+            elif node_type == 'File':
+                color = '#DDA0DD'  # Plum
+                size = 15
+            elif node_type == 'Network':
+                color = '#F0E68C'  # Khaki
+                size = 15
+            else:
+                color = '#D3D3D3'  # Light gray
+                size = 12
+        
+        title = f"{node_type}: {node_name}"
+        if is_malicious:
+            title += "\n🚨 MALICIOUS"
+        
+        all_nodes[node] = {
+            'id': node,
+            'label': node_name,
+            'title': title,
+            'color': color,
+            'size': size,
+            'type': node_type,
+            'is_malicious': is_malicious
+        }
+    
+    # Prepare edge data with entry indices and sequence info
+    for idx, edge_info in enumerate(all_edges):
+        src, dst, key = edge_info['src'], edge_info['dst'], edge_info['key']
+        data = edge_info['data']
+        edge_meta = edge_info['metadata']
+        
+        operation = edge_meta.get('operation', 'unknown')
+        line_id = edge_meta.get('line_id', 'N/A')
+        timestamp = edge_meta.get('timestamp', data.get('timestamp', 'N/A'))
+        
+        # Check if this edge is malicious
+        is_malicious_edge = str(line_id) in malicious_line_ids if malicious_specs else False
+        
+        # Get sequence info
+        sequence_pattern = edge_info['sequence_pattern']
+        sequence_color = edge_info['sequence_color']
+        sequence_confidence = edge_info['sequence_confidence']
+        sequence_description = edge_info['sequence_description']
+        
+        # Edge styling - sequence patterns take precedence over malicious detection
+        if sequence_pattern != 'Ungrouped':
+            edge_color = sequence_color
+            edge_width = 2 + int(sequence_confidence * 3)
+            opacity = 0.7 + (sequence_confidence * 0.3)
+        elif is_malicious_edge:
+            edge_color = '#FF0000'  # Red for malicious edges
+            edge_width = 3
+            opacity = 0.8
+        else:
+            edge_color = '#CCCCCC'  # Gray for normal edges
+            edge_width = 1
+            opacity = 0.6
+        
+        edge_id = f"{src}->{dst}#{key}"
+        
+        # Create edge label with sequence info
+        if sequence_pattern != 'Ungrouped':
+            edge_label = f"{operation} (#{idx+1})\n[{sequence_pattern}]"
+        else:
+            edge_label = f"{operation} (#{idx+1})"
+        
+        # Create detailed title
+        title_parts = [
+            f"Entry #{idx+1}/{total_entries}",
+            f"Operation: {operation}",
+            f"Line ID: {line_id}",
+            f"Timestamp: {timestamp}",
+            f"Edge: {src} → {dst}",
+            f"Sequence Pattern: {sequence_pattern}",
+            f"Pattern Description: {sequence_description}"
+        ]
+        
+        if sequence_confidence > 0:
+            title_parts.append(f"Confidence: {sequence_confidence:.2f}")
+        
+        if is_malicious_edge:
+            title_parts.append("🚨 MALICIOUS ENTRY")
+        
+        edge_title = "\n".join(title_parts)
+        
+        all_edge_data[idx] = {
+            'id': edge_id,
+            'from': src,
+            'to': dst,
+            'label': edge_label,
+            'title': edge_title,
+            'color': {'color': edge_color, 'opacity': opacity},
+            'width': edge_width,
+            'smooth': {"enabled": True, "type": 'dynamic'},
+            'entry_index': idx,
+            'is_malicious': is_malicious_edge,
+            'operation': operation,
+            'line_id': line_id,
+            'sequence_pattern': sequence_pattern,
+            'sequence_confidence': sequence_confidence
+        }
+    
+    # Initially add all nodes and edges (will be filtered by JavaScript)
+    for node_data in all_nodes.values():
+        net.add_node(node_data['id'], 
+                    label=node_data['label'],
+                    title=node_data['title'],
+                    color=node_data['color'],
+                    size=node_data['size'])
+    
+    for edge_data in all_edge_data.values():
+        net.add_edge(edge_data['from'], edge_data['to'],
+                    id=edge_data['id'],
+                    label=edge_data['label'],
+                    title=edge_data['title'],
+                    color=edge_data['color'],
+                    width=edge_data['width'],
+                    smooth=edge_data['smooth'])
+    
+    # Set network options
+        net.set_options("""
+        var options = {
+            "physics": {
+                "enabled": false
+            },
+            "nodes": {
+                "font": {"size": 12, "color": "#000000"}
+            },
+            "edges": {
+                "font": {"size": 10}
+            },
+            "interaction": {
+                "dragNodes": true,
+                "dragView": true,
+                "zoomView": true
+            }
+        }
+        """)
+    
+    # Save the HTML
+    net.show(output_path)
+    
+    # Add stabilization script
+    with open(output_path, 'r') as f:
+        html_content = f.read()
+    
+    # Create sequence pattern legend
+    sequence_legend = ""
+    for pattern in sequence_patterns:
+        sequence_legend += f"""
+        <div style="margin-bottom: 8px; padding: 5px; border-left: 4px solid {pattern.color};">
+            <strong>{pattern.name}</strong><br>
+            <small style="color: #666;">{pattern.description}</small>
+        </div>
+        """
+    
+    # Add sequence group statistics
+    sequence_stats = ""
+    if sequence_groups:
+        sequence_stats += "<hr><div style='font-size: 12px;'><strong>Detected Groups:</strong><br>"
+        for group_id, group_info in sequence_groups.items():
+            pattern_name = group_info['pattern'].name
+            edge_count = len(group_info['edges'])
+            confidence = group_info['confidence']
+            sequence_stats += f"Group {group_id}: {pattern_name} ({edge_count} edges, {confidence:.1%})<br>"
+        sequence_stats += "</div>"
+    
+    # Create the interactive controls HTML and JavaScript
+    interactive_controls = f"""
+    <!-- Interactive Entry Controls -->
+    <div id="entryControls" style="position: fixed; top: 10px; left: 10px; background: white; padding: 20px; border: 2px solid #ccc; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 400px;">
+        <h3 style="margin-top: 0;">Entry Interval Controls</h3>
+        
+        <div style="margin-bottom: 15px;">
+            <label for="startEntry">Start Entry:</label>
+            <input type="range" id="startEntry" min="0" max="{total_entries-1}" value="0" style="width: 200px;">
+            <span id="startEntryValue">0</span>
+        </div>
+        
+        <div style="margin-bottom: 15px;">
+            <label for="endEntry">End Entry:</label>
+            <input type="range" id="endEntry" min="0" max="{total_entries-1}" value="{min(total_entries-1, 100)}" style="width: 200px;">
+            <span id="endEntryValue">{min(total_entries-1, 100)}</span>
+        </div>
+        
+        <div style="margin-bottom: 15px;">
+            <label>
+                <input type="checkbox" id="showMaliciousOnly"> Show Only Malicious Entries
+            </label>
+        </div>
+        
+        <div style="margin-bottom: 15px;">
+            <label>
+                <input type="checkbox" id="showSequencesOnly"> Show Only Sequence Patterns
+            </label>
+        </div>
+        
+        <div style="margin-bottom: 15px;">
+            <button onclick="resetView()" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Reset View</button>
+            <button onclick="showAll()" style="background: #2196F3; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Show All</button>
+        </div>
+        
+        <div style="font-size: 12px; color: #666;">
+            <div>Total Entries: {total_entries}</div>
+            <div id="visibleStats">Visible: 0 entries, 0 nodes</div>
+            <div>Malicious Entries: {len([e for e in all_edge_data.values() if e['is_malicious']])}</div>
+            <div>Sequence Groups: {len(sequence_groups)}</div>
+        </div>
+    </div>
+
+    <!-- Sequence Pattern Legend -->
+    <div id="sequenceLegend" style="position: fixed; top: 10px; right: 10px; background: white; padding: 15px; border: 2px solid #ccc; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 300px;">
+        <h3 style="margin-top: 0;">Sequence Patterns</h3>
+        <div style="max-height: 300px; overflow-y: auto;">
+            {sequence_legend}
+        </div>
+        {sequence_stats}
+    </div>
+
+    <script type="text/javascript">
+        // Global variables for filtering
+        let allNodesData = """ + json.dumps(all_nodes) + """;
+        let allEdgesData = """ + json.dumps(all_edge_data) + """;
+        let currentNetwork = null;
+        
+        // Wait for network to be ready
+        document.addEventListener('DOMContentLoaded', function() {{
+            setTimeout(function() {{
+                if (typeof network !== 'undefined') {{
+                    currentNetwork = network;
+                    initializeControls();
+                    updateVisualization(); // Initial update
+                    
+                    // Disable physics after stabilization
+                    network.on("stabilizationIterationsDone", function () {{
+                        network.setOptions({{physics: {{enabled: false}}}});
+                        console.log("Physics disabled after stabilization");
+                    }});
+                    
+                    setTimeout(function() {{
+                        network.setOptions({{physics: {{enabled: false}}}});
+                        console.log("Physics disabled after timeout");
+                    }}, 10000);
+                }}
+            }}, 1000);
+        }});
+        
+        function initializeControls() {{
+            const startSlider = document.getElementById('startEntry');
+            const endSlider = document.getElementById('endEntry');
+            const maliciousCheckbox = document.getElementById('showMaliciousOnly');
+            const sequenceCheckbox = document.getElementById('showSequencesOnly');
+            
+            // Add event listeners
+            startSlider.addEventListener('input', function() {{
+                document.getElementById('startEntryValue').textContent = this.value;
+                // Ensure start <= end
+                if (parseInt(this.value) > parseInt(endSlider.value)) {{
+                    endSlider.value = this.value;
+                    document.getElementById('endEntryValue').textContent = this.value;
+                }}
+                updateVisualization();
+            }});
+            
+            endSlider.addEventListener('input', function() {{
+                document.getElementById('endEntryValue').textContent = this.value;
+                // Ensure end >= start
+                if (parseInt(this.value) < parseInt(startSlider.value)) {{
+                    startSlider.value = this.value;
+                    document.getElementById('startEntryValue').textContent = this.value;
+                }}
+                updateVisualization();
+            }});
+            
+            maliciousCheckbox.addEventListener('change', updateVisualization);
+            sequenceCheckbox.addEventListener('change', updateVisualization);
+        }}
+        
+        function updateVisualization() {{
+            if (!currentNetwork) return;
+            
+            const startEntry = parseInt(document.getElementById('startEntry').value);
+            const endEntry = parseInt(document.getElementById('endEntry').value);
+            const showMaliciousOnly = document.getElementById('showMaliciousOnly').checked;
+            const showSequencesOnly = document.getElementById('showSequencesOnly').checked;
+            
+            // Filter edges based on entry range and filters
+            const visibleEdges = [];
+            const usedNodes = new Set();
+            
+            Object.values(allEdgesData).forEach(edge => {{
+                const entryIndex = edge.entry_index;
+                const inRange = entryIndex >= startEntry && entryIndex <= endEntry;
+                const passesFilter = (!showMaliciousOnly || edge.is_malicious) && 
+                                   (!showSequencesOnly || edge.sequence_pattern !== 'Ungrouped');
+                
+                if (inRange && passesFilter) {{
+                    visibleEdges.push(edge);
+                    usedNodes.add(edge.from);
+                    usedNodes.add(edge.to);
+                }}
+            }});
+            
+            // Filter nodes to only those used by visible edges
+            const visibleNodes = [];
+            usedNodes.forEach(nodeId => {{
+                if (allNodesData[nodeId]) {{
+                    visibleNodes.push(allNodesData[nodeId]);
+                }}
+            }});
+            
+            // Update the network
+            const nodes = new vis.DataSet(visibleNodes);
+            const edges = new vis.DataSet(visibleEdges);
+            
+            currentNetwork.setData({{ nodes: nodes, edges: edges }});
+            
+            // Update statistics
+            document.getElementById('visibleStats').textContent = 
+                `Visible: ${{visibleEdges.length}} entries, ${{visibleNodes.length}} nodes`;
+        }}
+        
+        function resetView() {{
+            document.getElementById('startEntry').value = 0;
+            document.getElementById('endEntry').value = {min(total_entries-1, 100)};
+            document.getElementById('startEntryValue').textContent = '0';
+            document.getElementById('endEntryValue').textContent = '{min(total_entries-1, 100)}';
+            document.getElementById('showMaliciousOnly').checked = false;
+            document.getElementById('showSequencesOnly').checked = false;
+            updateVisualization();
+        }}
+        
+        function showAll() {{
+            document.getElementById('startEntry').value = 0;
+            document.getElementById('endEntry').value = {total_entries-1};
+            document.getElementById('startEntryValue').textContent = '0';
+            document.getElementById('endEntryValue').textContent = '{total_entries-1}';
+            document.getElementById('showMaliciousOnly').checked = false;
+            document.getElementById('showSequencesOnly').checked = false;
+            updateVisualization();
+        }}
+    </script>
+    """
+    
+    # Insert the controls before the closing body tag
+    html_content = html_content.replace('</body>', interactive_controls + '</body>')
+    
+    with open(output_path, 'w') as f:
+        f.write(html_content)
+    
+    print(f"📊 Sequence Analysis Summary:")
+    print(f"   Found {len(sequence_groups)} sequence groups")
+    print(f"   Total entries: {total_entries}")
+    print(f"   Malicious entries: {len([e for e in all_edge_data.values() if e['is_malicious']])}")
+    
+    return output_path
+
+
+
+
+def find_sequence_groups(G, edge_metadata, sequence_patterns=None, max_gap=1, target_file=None, enable_result_matching=None):
+    """
+    Find groups of consecutive edges that match defined sequence patterns based on exact operation names.
+    The sequence must be against the same target (same source-destination pair) to be identified together.
+    When multiple patterns match at the same position, selects the one with the highest confidence score.
+    
+    Args:
+        G: NetworkX MultiDiGraph
+        edge_metadata: dict mapping (src,dst,key) -> metadata
+        sequence_patterns: list of SequencePattern objects
+        max_gap: maximum number of non-matching entries allowed between pattern matches
+        target_file: target file identifier for loading original CSV data
+        enable_result_matching: whether to use result column matching (uses global setting if None)
+    
+    Returns:
+        dict: mapping group_id -> {
+            'pattern': SequencePattern,
+            'edges': list of (src, dst, key),
+            'start_index': int,
+            'end_index': int,
+            'confidence': float,
+            'matched_operations': list of matched operation names,
+            'target_pair': (src, dst)
+        }
+    """
+    if sequence_patterns is None:
+        sequence_patterns = ATTACK_SEQUENCE_PATTERNS
+    
+    if enable_result_matching is None:
+        enable_result_matching = ENABLE_RESULT_MATCHING
+    
+    # Load original CSV data if result matching is enabled
+    csv_data = None
+    if enable_result_matching and target_file:
+        csv_data = load_original_csv_data(target_file)
+        if csv_data is None:
+            print("   ⚠️  Result matching disabled due to CSV loading failure")
+            enable_result_matching = False
+    
+    print(f"🔍 Result matching: {'ENABLED' if enable_result_matching else 'DISABLED'}")
+    
+    # Group edges by target (src, dst) pair and get them in chronological order
+    target_edge_groups = defaultdict(list)
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        line_id = _get_edge_line_id(src, dst, key, data, edge_metadata)
+        sort_key = ts if ts is not None else (line_id if line_id is not None else 0)
+        
+        # Get operation from metadata and normalize it
+        edge_meta = edge_metadata.get((src, dst, key), {})
+        operation = edge_meta.get('operation', data.get('operation', 'unknown'))
+        
+        # Get result from original CSV if available
+        result = None
+        if enable_result_matching and csv_data and line_id:
+            csv_row = csv_data.get(str(line_id))
+            if csv_row:
+                result = csv_row.get('Result')
+        
+        target_edge_groups[(src, dst)].append((sort_key, src, dst, key, operation, data, result))
+    
+    # Sort edges within each target group chronologically
+    for target_pair in target_edge_groups:
+        target_edge_groups[target_pair].sort(key=lambda x: x[0])
+    
+    print(f"📋 Found {len(target_edge_groups)} unique target pairs (src, dst)")
+    if enable_result_matching:
+        print(f"📋 Sample operations with results from different targets:")
+    else:
+        print(f"📋 Sample operations from different targets:")
+    
+    sample_count = 0
+    for target_pair, edge_list in list(target_edge_groups.items())[:3]:
+        print(f"   Target {target_pair}: {len(edge_list)} operations")
+        for i, edge_data in enumerate(edge_list[:3]):
+            sample_count += 1
+            if len(edge_data) >= 7:  # Has result data
+                _, src, dst, key, norm_op, data, result = edge_data
+                if enable_result_matching and result:
+                    print(f"     {sample_count}. {norm_op} -> {result}")
+                else:
+                    print(f"     {sample_count}. {norm_op}")
+            else:  # Legacy format without result
+                _, src, dst, key, norm_op, data = edge_data
+                print(f"     {sample_count}. {norm_op}")
+        if len(edge_list) > 3:
+            print(f"     ... and {len(edge_list) - 3} more")
+    
+    # Find sequence groups within each target pair
+    sequence_groups = {}
+    group_id = 0
+    
+    # For each target pair, find all potential pattern matches at all positions
+    for target_pair, edge_list in target_edge_groups.items():
+        if len(edge_list) < min(p.min_length for p in sequence_patterns):
+            continue  # Skip targets with insufficient edges
+        
+        print(f"\n📍 Analyzing target pair {target_pair} with {len(edge_list)} edges")
+        
+        # Collect all potential matches for this target
+        potential_matches = []
+        
+        for pattern in sequence_patterns:
+            print(f"   🔍 Testing pattern: {pattern.name} (min_length: {pattern.min_length})")
+            pattern_length = len(pattern.operations)
+            
+            if len(edge_list) < pattern.min_length:
+                continue  # Skip patterns requiring more edges than available
+            
+            # Sliding window to find pattern matches within this target
+            for start_idx in range(len(edge_list) - pattern.min_length + 1):
+                start_edge_data = edge_list[start_idx]
+                
+                # Handle both old format (6 elements) and new format (7 elements with result)
+                if len(start_edge_data) >= 7:
+                    _, start_src, start_dst, start_key, start_op, start_data, start_result = start_edge_data
+                else:
+                    _, start_src, start_dst, start_key, start_op, start_data = start_edge_data
+                    start_result = None
+                
+                matched_edges = []
+                matched_operations = []
+                pattern_positions = []
+                current_pattern_idx = 0
+                gap_count = 0
+                used_pattern_indices = set()  # Track which pattern operations we've matched
+                
+                # Look for pattern starting at start_idx within this target
+                search_end = min(start_idx + pattern_length * 2 + max_gap, len(edge_list))
+                
+                for check_idx in range(start_idx, search_end):
+                    edge_data = edge_list[check_idx]
+                    
+                    # Handle both old format (6 elements) and new format (7 elements with result)
+                    if len(edge_data) >= 7:
+                        _, src, dst, key, operation, data, result = edge_data
+                    else:
+                        _, src, dst, key, operation, data = edge_data
+                        result = None
+                    
+                    # Ensure we're still working with the same target
+                    if (src, dst) != target_pair:
+                        break
+                    
+                    if pattern.strict_order:
+                        # Strict order: must match operations in sequence
+                        if current_pattern_idx < pattern_length:
+                            target_operation = pattern.operations[current_pattern_idx]
+                            expected_result = pattern.results[current_pattern_idx] if hasattr(pattern, 'results') and current_pattern_idx < len(pattern.results) else None
+                            
+                            matches = match_operation_to_patterns(
+                                operation, [target_operation], 
+                                result=result, result_list=[expected_result] if expected_result else None,
+                                strict_order=True, current_index=0,
+                                enable_result_matching=enable_result_matching
+                            )
+                            
+                            if matches:
+                                # Found the next expected operation in sequence on same target
+                                matched_edges.append((src, dst, key))
+                                matched_operations.append(operation)
+                                pattern_positions.append(check_idx)
+                                current_pattern_idx += 1
+                                gap_count = 0
+                                
+                                # Continue until we've checked the full pattern or met minimum
+                                if current_pattern_idx >= pattern_length:
+                                    break
+                            else:
+                                gap_count += 1
+                                if gap_count > max_gap:
+                                    break
+                    else:
+                        # Flexible order: can skip operations but must maintain overall order
+                        expected_results = pattern.results if hasattr(pattern, 'results') else None
+                        
+                        pattern_matches = match_operation_to_patterns(
+                            operation, pattern.operations, 
+                            result=result, result_list=expected_results,
+                            strict_order=False,
+                            enable_result_matching=enable_result_matching
+                        )
+                        
+                        if pattern_matches:
+                            # Check if we can match this operation while maintaining order
+                            for match_idx in pattern_matches:
+                                # Only allow matching operations that come at or after the highest position matched so far
+                                max_position = max(used_pattern_indices) if used_pattern_indices else -1
+                                if match_idx not in used_pattern_indices and match_idx > max_position:
+                                    matched_edges.append((src, dst, key))
+                                    matched_operations.append(operation)
+                                    pattern_positions.append(check_idx)
+                                    used_pattern_indices.add(match_idx)
+                                    gap_count = 0
+                                    break
+                            
+                            # If we've matched enough operations for the minimum
+                            if len(used_pattern_indices) >= pattern.min_length:
+                                # Check if we have a valid sequence (may not need all operations)
+                                if len(used_pattern_indices) >= pattern_length:
+                                    break
+                        else:
+                            gap_count += 1
+                            if gap_count > max_gap:
+                                break
+                
+                # Validate the sequence and calculate score
+                if len(matched_edges) >= pattern.min_length:
+                    unique_ops = set(matched_operations)
+                    if len(unique_ops) >= 0:  # Must have at least 2 different operations
+                        
+                        # Calculate confidence and completeness
+                        if pattern.strict_order:
+                            completeness = current_pattern_idx / pattern_length
+                        else:
+                            completeness = len(used_pattern_indices) / pattern_length
+                        
+                        pattern_coverage = completeness
+                        
+                        if pattern_coverage >= 0.4:  # At least 40% of pattern operations
+                            gap_penalty = max(0, 1 - (gap_count / max_gap)) if max_gap > 0 else 1
+                            confidence = completeness * gap_penalty
+                            
+                            # Additional scoring factors for best match selection
+                            edge_count_bonus = min(1.0, len(matched_edges) / pattern_length)
+                            unique_ops_bonus = min(1.0, len(unique_ops) / pattern_length)
+                            
+                            # Final score combines confidence with bonus factors
+                            final_score = confidence * (1 + 0.2 * edge_count_bonus + 0.1 * unique_ops_bonus)
+                            
+                            potential_match = {
+                                'pattern': pattern,
+                                'edges': matched_edges,
+                                'start_index': start_idx,
+                                'end_index': pattern_positions[-1] if pattern_positions else start_idx,
+                                'confidence': confidence,
+                                'final_score': final_score,
+                                'matched_operations': matched_operations,
+                                'completeness': completeness,
+                                'unique_operations': len(unique_ops),
+                                'pattern_coverage': pattern_coverage,
+                                'target_pair': target_pair
+                            }
+                            
+                            potential_matches.append(potential_match)
+                            print(f"      ✅ Potential match: {pattern.name} at pos {start_idx}, score: {final_score:.3f}, conf: {confidence:.3f}")
+        
+        # Now select the best non-overlapping matches for this target
+        if potential_matches:
+            # Sort by final score (highest first)
+            potential_matches.sort(key=lambda x: x['final_score'], reverse=True)
+            print(f"   🏆 Found {len(potential_matches)} potential matches, selecting best non-overlapping ones")
+            
+            selected_matches = []
+            used_positions = set()
+            
+            for match in potential_matches:
+                # Check if this match overlaps significantly with already selected matches
+                match_positions = set(range(match['start_index'], match['end_index'] + 1))
+                overlap = len(match_positions & used_positions) / len(match_positions)
+                
+                if overlap < 0.5:  # Less than 50% overlap allowed
+                    selected_matches.append(match)
+                    used_positions.update(match_positions)
+                    print(f"      ✅ Selected: {match['pattern'].name} (score: {match['final_score']:.3f})")
+                else:
+                    print(f"      ❌ Skipped: {match['pattern'].name} (overlap: {overlap:.2f})")
+            
+            # Add selected matches to sequence groups
+            for match in selected_matches:
+                if match['confidence'] > 0.4:  # Minimum confidence threshold
+                    sequence_groups[group_id] = match
+                    group_id += 1
+    
+    return sequence_groups
+
+def match_operation_to_patterns(operation, operation_list, result=None, result_list=None, strict_order=False, current_index=0, enable_result_matching=False):
+    """
+    Check if an operation (and optionally result) matches any operations in a sequence pattern
+    
+    Args:
+        operation: The operation name to match
+        operation_list: List of expected operations in the pattern
+        result: The result value to match (optional)
+        result_list: List of expected results corresponding to operations (optional)
+        strict_order: Whether to enforce strict ordering
+        current_index: Current position in pattern for strict order matching
+        enable_result_matching: Whether to include result in matching criteria
+    
+    Returns:
+        List of matching indices in the pattern
+    """
+    operation_clean = operation.strip()
+    
+    if strict_order:
+        # For strict order, only check if operation matches the current expected operation
+        if current_index < len(operation_list):
+            operation_matches = operation_clean == operation_list[current_index]
+            
+            # If result matching is enabled, also check result
+            if enable_result_matching and result_list and current_index < len(result_list):
+                result_matches = result and result.strip() == result_list[current_index]
+                return [current_index] if operation_matches and result_matches else []
+            else:
+                return [current_index] if operation_matches else []
+        return []
+    else:
+        # For flexible order, check if operation matches any in the list
+        matched_indices = []
+        for i, expected_op in enumerate(operation_list):
+            operation_matches = operation_clean == expected_op
+            
+            # If result matching is enabled, also check result
+            if enable_result_matching and result_list and i < len(result_list):
+                if result:
+                    result_matches = result.strip() == result_list[i]
+                    if operation_matches and result_matches:
+                        matched_indices.append(i)
+                # If no result provided but result matching is enabled, skip this match
+            else:
+                # No result matching, just check operation
+                if operation_matches:
+                    matched_indices.append(i)
+        return matched_indices
