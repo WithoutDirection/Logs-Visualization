@@ -3,7 +3,12 @@ from tqdm import tqdm
 from pyvis.network import Network
 import pandas as pd
 import json
+import os
 from collections import defaultdict, namedtuple
+
+# =========================================================================
+# CONSTANTS AND CONFIGURATIONS
+# =========================================================================
 
 SequencePattern = namedtuple('SequencePattern', ['name', 'operations', 'color', 'description', 'min_length', 'strict_order', 'results'])
 ENABLE_RESULT_MATCHING = False  # Toggle to enable/disable result column matching
@@ -75,16 +80,114 @@ ATTACK_SEQUENCE_PATTERNS = [
     
 ]
 
+# =========================================================================
+# BASIC UTILITY FUNCTIONS
+# =========================================================================
 
-def _get_edge_timestamp(src, dst, key, data, edge_metadata):
-    """Get timestamp from edge metadata or data"""
-    edge_meta = edge_metadata.get((src, dst, key), {})
-    return edge_meta.get('timestamp', data.get('timestamp'))
+def _get_edge_timestamp(src, dst, key, edge_data, edge_metadata):
+    """Get timestamp for an edge from either edge data or metadata mapping"""
+    # Try edge_data first
+    ts = edge_data.get('timestamp')
+    if ts is None and edge_metadata:
+        meta = edge_metadata.get((src, dst, key)) or {}
+        ts = meta.get('timestamp') or meta.get('time')
+    try:
+        return int(ts) if ts is not None else None
+    except:
+        try:
+            return int(float(ts))
+        except:
+            return None
 
-def _get_edge_line_id(src, dst, key, data, edge_metadata):
-    """Get line_id from edge metadata or data"""
-    edge_meta = edge_metadata.get((src, dst, key), {})
-    return edge_meta.get('line_id', data.get('line_id'))
+def _get_edge_line_id(src, dst, key, edge_data, edge_metadata):
+    """Get line_id for an edge from either edge data or metadata mapping"""
+    # Try edge_data first
+    line_id = edge_data.get('line_id')
+    if line_id is None and edge_metadata:
+        meta = edge_metadata.get((src, dst, key)) or {}
+        line_id = meta.get('line_id')
+    try:
+        return int(line_id) if line_id is not None else None
+    except:
+        return None
+
+def load_original_csv_data(target_file, csv_path_template=None):
+    """
+    Load original CSV data to access additional columns like 'Result'
+    
+    Args:
+        target_file: Target file identifier
+        csv_path_template: Template string for CSV path (default uses ORIGINAL_CSV_PATH_TEMPLATE)
+    
+    Returns:
+        dict: mapping line_id -> row data, or None if file not found
+    """
+    if csv_path_template is None:
+        csv_path_template = ORIGINAL_CSV_PATH_TEMPLATE
+    
+    csv_path = csv_path_template.format(target_file=target_file)
+    
+    try:
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            print(f"📄 Loaded original CSV: {csv_path} ({len(df)} rows)")
+            
+            # Create mapping from LineID to row data
+            if 'LineID' in df.columns:
+                csv_data = {}
+                for _, row in df.iterrows():
+                    line_id = str(row['LineID'])
+                    csv_data[line_id] = row.to_dict()
+                print(f"   📋 Mapped {len(csv_data)} rows by LineID")
+                print(f"   📋 Available columns: {list(df.columns)}")
+                return csv_data
+            else:
+                print(f"   ⚠️  No 'LineID' column found in CSV")
+                return None
+        else:
+            print(f"   ⚠️  CSV file not found: {csv_path}")
+            return None
+    except Exception as e:
+        print(f"   ❌ Error loading CSV: {e}")
+        return None
+
+def list_node_edges(G, node):
+    """
+    Given a node, list all its outbound and inbound edges with metadata.
+    Returns:
+        - outbound_edges: list of (src, dst, key, edge_data)
+        - inbound_edges: list of (src, dst, key, edge_data)
+    """
+    outbound_edges = []
+    inbound_edges = []
+    # Outbound edges: edges where node is the source
+    for _, dst, key, data in G.out_edges(node, keys=True, data=True):
+        outbound_edges.append((node, dst, key, data))
+    # Inbound edges: edges where node is the destination
+    for src, _, key, data in G.in_edges(node, keys=True, data=True):
+        inbound_edges.append((src, node, key, data))
+    return outbound_edges, inbound_edges
+
+def get_unique_operations_from_graph(G, edge_metadata, limit=None):
+    """Get a list of unique operation names from the graph to help define patterns"""
+    
+    operations = set()
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        edge_meta = edge_metadata.get((src, dst, key), {})
+        operation = edge_meta.get('operation', data.get('operation', 'unknown'))
+        operations.add(operation)
+
+    unique_ops = sorted(list(operations))
+    
+    if limit:
+        unique_ops = unique_ops[:limit]
+    
+    return unique_ops
+
+# =========================================================================
+# CORE GRAPH OPERATIONS
+# =========================================================================
+    
 
 def event_handle(e):
     srcUUID = e["srcNode"]["UUID"]
@@ -193,9 +296,10 @@ def generate_query_graph(campaign_events, per_event=False, return_full_graph=Fal
     
     return G, edge_metadata
 
+# =========================================================================
+# ANALYSIS FUNCTIONS (REAPr, Pattern Analysis)
+# =========================================================================
 
-
-# Function: Apply REAPr labeling to simplified graph (per-event, selective src/dst marking)
 def apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs):
     """
     Apply REAPr-inspired labeling to simplified graph (one edge per log entry).
@@ -336,8 +440,10 @@ def apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs):
 
     return list(malicious_processes), list(malicious_resources), contaminated_nodes, impact_nodes
 
+# =========================================================================
+# VISUALIZATION FUNCTIONS
+# =========================================================================
 
-# Corrected visualization function for simplified graph
 def create_reapr_visualization(G, edge_metadata, malicious_specs, output_path, show_contaminated=False, show_only_malicious=True):
     """Create REAPr visualization showing ONLY malicious and contaminated nodes (filtered view) for simplified graph"""
     # Apply selective labeling for simplified graph
@@ -674,24 +780,6 @@ def export_reapr_labels(G, output_path="./Dataset/QueryGraph/GenerateCampaign/re
 
 
 # Utility: List all inbound and outbound edges for a given node in the graph
-def list_node_edges(G, node):
-    """
-    Given a node, list all its outbound and inbound edges with metadata.
-    Returns:
-        - outbound_edges: list of (src, dst, key, edge_data)
-        - inbound_edges: list of (src, dst, key, edge_data)
-    """
-    outbound_edges = []
-    inbound_edges = []
-    # Outbound edges: edges where node is the source
-    for _, dst, key, data in G.out_edges(node, keys=True, data=True):
-        outbound_edges.append((node, dst, key, data))
-    # Inbound edges: edges where node is the destination
-    for src, _, key, data in G.in_edges(node, keys=True, data=True):
-        inbound_edges.append((src, node, key, data))
-    return outbound_edges, inbound_edges
-
-
 def create_malicious_edge_visualization(G, edge_metadata, malicious_specs, output_path="./Dataset/QueryGraph/GenerateCampaign/malicious_edges.html"):
     """
     Create pyvis visualization that shows ALL edges between explicitly malicious nodes only.
@@ -915,216 +1003,192 @@ def create_malicious_edge_visualization(G, edge_metadata, malicious_specs, outpu
     print(f"Visualization saved to disk - view in browser for best results")
     return output_path
 
-# Helper functions for edge metadata access and sequence matching
-def _get_edge_timestamp(src, dst, key, data, edge_metadata):
-    """Get timestamp from edge metadata or data"""
-    edge_meta = edge_metadata.get((src, dst, key), {})
-    return edge_meta.get('timestamp', data.get('timestamp'))
+# =========================================================================
+# GRAPH SLICING AND WINDOWING FUNCTIONS
+# =========================================================================
 
-def _get_edge_line_id(src, dst, key, data, edge_metadata):
-    """Get line_id from edge metadata or data"""
-    edge_meta = edge_metadata.get((src, dst, key), {})
-    return edge_meta.get('line_id', data.get('line_id'))
+def slice_graph_by_time(G, edge_metadata=None, start_ts=None, end_ts=None, inclusive=True):
+    """
+    Return a new MultiDiGraph with only edges whose timestamp is within [start_ts, end_ts).
+    - G: networkx.MultiDiGraph
+    - edge_metadata: dict mapping (src,dst,key) -> metadata (optional)
+    - start_ts, end_ts: timestamps (seconds)
+    - inclusive: if True uses <= end_ts, else uses < end_ts
+    """
+    if start_ts is None or end_ts is None:
+        raise ValueError("start_ts and end_ts must be provided")
+    
+    newG = nx.MultiDiGraph()
+    
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        if ts is None:
+            continue
+        
+        if inclusive:
+            ok = (start_ts <= ts <= end_ts)
+        else:
+            ok = (start_ts <= ts < end_ts)
+        
+        if ok:
+            # Ensure nodes exist with attributes
+            if src not in newG:
+                newG.add_node(src, **G.nodes[src])
+            if dst not in newG:
+                newG.add_node(dst, **G.nodes[dst])
+            # Copy edge with all attributes
+            newG.add_edge(src, dst, key=key, **data)
+    
+    return newG
 
-def load_original_csv_data(target_file, csv_path_template=None):
+def slice_graph_by_entry_count(G, edge_metadata=None, start_entry=0, end_entry=None):
     """
-    Load original CSV data to access additional columns like 'Result'
-    
-    Args:
-        target_file: Target file identifier
-        csv_path_template: Template string for CSV path
-    
-    Returns:
-        dict: mapping line_id -> row data, or None if file not found
+    Return a new MultiDiGraph with edges from start_entry to end_entry (by chronological order).
+    - G: networkx.MultiDiGraph
+    - edge_metadata: dict mapping (src,dst,key) -> metadata (optional)
+    - start_entry: starting entry index (0-based)
+    - end_entry: ending entry index (exclusive), if None uses all remaining entries
     """
-    # Since this is mainly for result matching which we don't use heavily,
-    # return None for now
-    return None
-
-def slice_graph_by_entry_count(G, edge_metadata, start_entry=0, end_entry=100):
-    """
-    Create a subgraph containing only edges within a specific entry range
-    
-    Args:
-        G: NetworkX MultiDiGraph
-        edge_metadata: dict mapping (src,dst,key) -> metadata
-        start_entry: starting entry index (inclusive)
-        end_entry: ending entry index (exclusive)
-    
-    Returns:
-        NetworkX MultiDiGraph: subgraph with edges in the specified range
-    """
-    # Create a new graph
-    subgraph = nx.MultiDiGraph()
-    
-    # Get all edges with their timestamps/order
+    # Get all edges with their timestamps or line_ids for ordering
     edge_list = []
     for src, dst, key, data in G.edges(keys=True, data=True):
-        edge_meta = edge_metadata.get((src, dst, key), {})
-        time_order = data.get('time_order', 0)
-        edge_list.append((time_order, src, dst, key, data))
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        line_id = _get_edge_line_id(src, dst, key, data, edge_metadata)
+        
+        # Use timestamp if available, otherwise line_id, otherwise edge order
+        sort_key = ts if ts is not None else (line_id if line_id is not None else len(edge_list))
+        edge_list.append((sort_key, src, dst, key, data))
     
-    # Sort by time order
+    # Sort edges chronologically
     edge_list.sort(key=lambda x: x[0])
     
-    # Select edges in the specified range
-    selected_edges = edge_list[start_entry:end_entry]
+    # Slice the edge list
+    if end_entry is None:
+        end_entry = len(edge_list)
     
-    # Add selected edges and their nodes to the subgraph
-    for time_order, src, dst, key, data in selected_edges:
-        # Add nodes if they don't exist
-        if not subgraph.has_node(src):
-            subgraph.add_node(src, **G.nodes[src])
-        if not subgraph.has_node(dst):
-            subgraph.add_node(dst, **G.nodes[dst])
-        
-        # Add edge
-        subgraph.add_edge(src, dst, key=key, **data)
+    sliced_edges = edge_list[start_entry:end_entry]
     
-    return subgraph
+    # Create new graph with sliced edges
+    newG = nx.MultiDiGraph()
+    for _, src, dst, key, data in sliced_edges:
+        # Ensure nodes exist with attributes
+        if src not in newG:
+            newG.add_node(src, **G.nodes[src])
+        if dst not in newG:
+            newG.add_node(dst, **G.nodes[dst])
+        # Copy edge with all attributes
+        newG.add_edge(src, dst, key=key, **data)
+    
+    return newG
 
-def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=None, output_path="interactive_entry_graph.html", sequence_patterns=None):
+def sliding_entry_windows(G, edge_metadata=None, window_size=100, step=50):
     """
-    Create an interactive visualization of the graph with entry-based analysis and sequence grouping
-    
-    Args:
-        G: NetworkX MultiDiGraph
-        edge_metadata: dict mapping (src,dst,key) -> metadata
-        malicious_specs: list of (line_id, type) tuples for malicious entries
-        output_path: path to save the HTML file
-        sequence_patterns: list of SequencePattern objects for sequence detection
-    
-    Returns:
-        str: path to the created HTML file
+    Generator that yields (window_start_idx, window_end_idx, subgraph) for consecutive entry windows.
+    - window_size: number of entries per window
+    - step: number of entries to advance each window
     """
-    from pyvis.network import Network
-    from collections import defaultdict
+    total_edges = G.number_of_edges()
     
-    # Import sequence patterns if not provided
-    if sequence_patterns is None:
-        try:
-            # Try to import from notebook context
-            sequence_patterns = ATTACK_SEQUENCE_PATTERNS
-        except:
-            # Define basic patterns if not available
-            from collections import namedtuple
-            SequencePattern = namedtuple('SequencePattern', ['name', 'operations', 'color', 'description', 'min_length', 'strict_order', 'results'])
-            sequence_patterns = [
-                SequencePattern(
-                    name="Process_Creation",
-                    operations=["Process Create"],
-                    color="#FF3333",
-                    description="Process creation operations",
-                    min_length=1,
-                    strict_order=False,
-                    results=["SUCCESS"]
-                ),
-                SequencePattern(
-                    name="File_Creation_Write",
-                    operations=["CreateFile", "WriteFile"],
-                    color="#FF6600",
-                    description="File creation followed by write operations",
-                    min_length=2,
-                    strict_order=True,
-                    results=["SUCCESS", "SUCCESS"]
-                ),
-                SequencePattern(
-                    name="Registry_Modification",
-                    operations=["RegOpenKey", "RegSetValue", "RegQueryKey", "RegCloseKey"],
-                    color="#33CC33",
-                    description="Registry key open and modification",
-                    min_length=2,
-                    strict_order=False,
-                    results=["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]
-                )
-            ]
+    if total_edges == 0:
+        return
     
-    # Find sequence groups for this graph
-    print(f"🔍 Analyzing sequence patterns in graph...")
-    sequence_groups = find_sequence_groups(G, edge_metadata, sequence_patterns=sequence_patterns)
-    
-    # Apply sequence coloring to graph edges
-    edge_to_group = {}
-    for group_id, group_info in sequence_groups.items():
-        for edge in group_info['edges']:
-            edge_to_group[edge] = group_id
-    
-    # Get all edges sorted by time order for entry interval functionality
-    all_edges = []
+    start_idx = 0
+    while start_idx < total_edges:
+        end_idx = min(start_idx + window_size, total_edges)
+        subgraph = slice_graph_by_entry_count(G, edge_metadata=edge_metadata, 
+                                            start_entry=start_idx, end_entry=end_idx)
+        yield start_idx, end_idx, subgraph
+        start_idx += step
+        if start_idx >= total_edges:
+            break
+
+def get_graph_time_range(G, edge_metadata=None):
+    """Get the min and max timestamps from the graph"""
+    all_ts = []
     for src, dst, key, data in G.edges(keys=True, data=True):
-        edge_meta = edge_metadata.get((src, dst, key), {})
-        time_order = data.get('time_order', 0)
-        
-        # Apply sequence group info to edge
-        edge_tuple = (src, dst, key)
-        if edge_tuple in edge_to_group:
-            group_id = edge_to_group[edge_tuple]
-            group_info = sequence_groups[group_id]
-            sequence_pattern = group_info['pattern'].name
-            sequence_color = group_info['pattern'].color
-            sequence_confidence = group_info['confidence']
-            sequence_description = group_info['pattern'].description
-        else:
-            sequence_pattern = 'Ungrouped'
-            sequence_color = '#CCCCCC'
-            sequence_confidence = 0.0
-            sequence_description = 'No pattern match'
-        
-        all_edges.append({
-            'time_order': time_order,
-            'src': src,
-            'dst': dst,
-            'key': key,
-            'data': data,
-            'metadata': edge_meta,
-            'sequence_pattern': sequence_pattern,
-            'sequence_color': sequence_color,
-            'sequence_confidence': sequence_confidence,
-            'sequence_description': sequence_description
-        })
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        if ts is not None:
+            all_ts.append(int(ts))
     
-    # Sort by time order
-    all_edges.sort(key=lambda x: x['time_order'])
-    total_entries = len(all_edges)
+    if not all_ts:
+        return None, None
     
-    # Create network visualization with smaller height to make room for controls
+    return min(all_ts), max(all_ts)
+
+def sliding_time_windows(G, edge_metadata=None, window_size=60, step=30, start_ts=None, end_ts=None):
+    """
+    Generator that yields (window_start, window_end, subgraph) for consecutive time windows.
+    window_size and step are in seconds.
+    """
+    # Get time range if not provided
+    if start_ts is None or end_ts is None:
+        min_ts, max_ts = get_graph_time_range(G, edge_metadata)
+        if min_ts is None:
+            return
+        start_ts = min_ts if start_ts is None else start_ts
+        end_ts = max_ts if end_ts is None else end_ts
+    
+    t = start_ts
+    while t <= end_ts:
+        window_end = min(t + window_size, end_ts)
+        subgraph = slice_graph_by_time(G, edge_metadata=edge_metadata, 
+                                     start_ts=t, end_ts=window_end, inclusive=True)
+        yield t, window_end, subgraph
+        t += step
+
+def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=None, output_path="interactive_entry_graph.html"):
+    """Create an interactive visualization with entry range selection"""
+    
+    total_edges = G.number_of_edges()
+    if total_edges == 0:
+        print("No edges found in graph")
+        return None
+    
+    print(f"Total entries (edges): {total_edges}")
+    
+    # Get edge ordering information
+    edge_list = []
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        line_id = _get_edge_line_id(src, dst, key, data, edge_metadata)
+        sort_key = ts if ts is not None else (line_id if line_id is not None else len(edge_list))
+        edge_list.append((sort_key, src, dst, key, data))
+    
+    # Sort edges chronologically
+    edge_list.sort(key=lambda x: x[0])
+    
+    # Apply REAPr analysis if malicious specs provided
+    if malicious_specs:
+        malicious_processes, malicious_resources, contaminated, impacts = apply_reapr_to_simplified_graph(
+            G, edge_metadata, malicious_specs
+        )
+    
+    # Create base visualization
+    from pyvis.network import Network
     net = Network(notebook=True, height="600px", width="100%", bgcolor="#ffffff", directed=True)
     
-    # Track malicious entities if specs provided
-    malicious_line_ids = set()
-    if malicious_specs:
-        malicious_line_ids = {spec[0] for spec in malicious_specs}
-    
-    # Create mapping of all nodes and edges for dynamic filtering
-    all_nodes = {}
-    all_edge_data = {}
-    
-    # Prepare node data
+    # Add all nodes with styling
     for node, data in G.nodes(data=True):
         node_type = data.get('type', 'Unknown')
         node_name = data.get('name', 'Unknown')
+        reapr_label = data.get('reapr_label', 'BENIGN')
         
-        # Check if this node is involved in malicious activities
-        is_malicious = False
-        if malicious_specs:
-            # Check if any edge involving this node has a malicious line_id
-            for edge_info in all_edges:
-                if (edge_info['src'] == node or edge_info['dst'] == node):
-                    line_id = edge_info['metadata'].get('line_id', '')
-                    if str(line_id) in malicious_line_ids:
-                        is_malicious = True
-                        break
-        
-        # Node styling
-        if is_malicious:
-            if node_type == 'Process':
-                color = '#FF0000'  # Red for malicious processes
+        # Color based on REAPr analysis if available
+        if malicious_specs and reapr_label != 'BENIGN':
+            if reapr_label == 'MALICIOUS_RESOURCE':
+                color = '#FF4444'  # Red
                 size = 25
-            else:
-                color = '#FF4400'  # Orange for malicious resources
+            elif reapr_label == 'CONTAMINATED':
+                color = '#FF8800'  # Orange  
                 size = 20
+            elif reapr_label == 'IMPACT':
+                color = '#FFAA00'  # Yellow-orange
+                size = 18
+            else:
+                color = '#CCCCCC'  # Gray
+                size = 15
         else:
-            # Default node coloring by type
+            # Default color by type
             if node_type == 'Process':
                 color = '#90EE90'  # Light green
                 size = 20
@@ -1142,353 +1206,305 @@ def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=Non
                 size = 12
         
         title = f"{node_type}: {node_name}"
-        if is_malicious:
-            title += "\n🚨 MALICIOUS"
+        if malicious_specs:
+            title += f"\nREAPr Label: {reapr_label}"
         
-        all_nodes[node] = {
-            'id': node,
-            'label': node_name,
-            'title': title,
-            'color': color,
-            'size': size,
-            'type': node_type,
-            'is_malicious': is_malicious
-        }
+        net.add_node(node, label=node_name, title=title, color=color, size=size)
     
-    # Prepare edge data with entry indices and sequence info
-    for idx, edge_info in enumerate(all_edges):
-        src, dst, key = edge_info['src'], edge_info['dst'], edge_info['key']
-        data = edge_info['data']
-        edge_meta = edge_info['metadata']
+    # Add all edges with entry indices
+    edge_count = {}
+    for idx, (sort_key, src, dst, key, data) in enumerate(edge_list):
+        edge_pair = (src, dst)
+        edge_count[edge_pair] = edge_count.get(edge_pair, 0) + 1
+        n = edge_count[edge_pair]
         
-        operation = edge_meta.get('operation', 'unknown')
+        # Get edge metadata
+        edge_meta = edge_metadata.get((src, dst, key), {})
         line_id = edge_meta.get('line_id', 'N/A')
+        operation = edge_meta.get('operation', 'unknown')
         timestamp = edge_meta.get('timestamp', data.get('timestamp', 'N/A'))
         
-        # Check if this edge is malicious
-        is_malicious_edge = str(line_id) in malicious_line_ids if malicious_specs else False
+        # Create edge label
+        edge_label = f"{operation}" + (f" #{n}" if n > 1 else "")
         
-        # Get sequence info
-        sequence_pattern = edge_info['sequence_pattern']
-        sequence_color = edge_info['sequence_color']
-        sequence_confidence = edge_info['sequence_confidence']
-        sequence_description = edge_info['sequence_description']
+        # Edge styling
+        edge_color = {'color': '#666666', 'opacity': 0.7}
+        edge_width = 1 + (n % 3)
         
-        # Edge styling - sequence patterns take precedence over malicious detection
-        if sequence_pattern != 'Ungrouped':
-            edge_color = sequence_color
-            edge_width = 2 + int(sequence_confidence * 3)
-            opacity = 0.7 + (sequence_confidence * 0.3)
-        elif is_malicious_edge:
-            edge_color = '#FF0000'  # Red for malicious edges
-            edge_width = 3
-            opacity = 0.8
-        else:
-            edge_color = '#CCCCCC'  # Gray for normal edges
-            edge_width = 1
-            opacity = 0.6
+        # Handle multiple edges with curves
+        smooth_type = 'curvedCW' if (n % 2 == 1) else 'curvedCCW'
+        roundness = min(0.6, 0.1 + 0.05 * (n - 1))
+        smooth = {"enabled": True, "type": smooth_type, "roundness": roundness}
         
-        edge_id = f"{src}->{dst}#{key}"
-        
-        # Create edge label with sequence info
-        if sequence_pattern != 'Ungrouped':
-            edge_label = f"{operation} (#{idx+1})\n[{sequence_pattern}]"
-        else:
-            edge_label = f"{operation} (#{idx+1})"
-        
-        # Create detailed title
-        title_parts = [
-            f"Entry #{idx+1}/{total_entries}",
-            f"Operation: {operation}",
-            f"Line ID: {line_id}",
-            f"Timestamp: {timestamp}",
-            f"Edge: {src} → {dst}",
-            f"Sequence Pattern: {sequence_pattern}",
-            f"Pattern Description: {sequence_description}"
-        ]
-        
-        if sequence_confidence > 0:
-            title_parts.append(f"Confidence: {sequence_confidence:.2f}")
-        
-        if is_malicious_edge:
-            title_parts.append("🚨 MALICIOUS ENTRY")
-        
-        edge_title = "\n".join(title_parts)
-        
-        all_edge_data[idx] = {
-            'id': edge_id,
-            'from': src,
-            'to': dst,
-            'label': edge_label,
-            'title': edge_title,
-            'color': {'color': edge_color, 'opacity': opacity},
-            'width': edge_width,
-            'smooth': {"enabled": True, "type": 'dynamic'},
-            'entry_index': idx,
-            'is_malicious': is_malicious_edge,
-            'operation': operation,
-            'line_id': line_id,
-            'sequence_pattern': sequence_pattern,
-            'sequence_confidence': sequence_confidence
+        net.add_edge(src, dst,
+                    id=f"{src}->{dst}#{key}",
+                    label=edge_label,
+                    title=f"Entry #{idx}\nOperation: {operation}\nLine ID: {line_id}\nTimestamp: {timestamp}",
+                    color=edge_color,
+                    width=edge_width,
+                    smooth=smooth,
+                    entry_index=idx)  # Store entry index for filtering
+    
+    # Enhanced options with entry controls
+    net.set_options("""
+    var options = {
+      "physics": {
+        "enabled": true,
+        "stabilization": {
+          "enabled": true,
+          "iterations": 100
         }
+      },
+      "nodes": {
+        "font": {"size": 12, "color": "#000000"}
+      },
+      "edges": {
+        "font": {"size": 10}
+      },
+      "interaction": {
+        "dragNodes": true,
+        "dragView": true,
+        "zoomView": true
+      }
+    }
+    """)
     
-    # Initially add all nodes and edges (will be filtered by JavaScript)
-    for node_data in all_nodes.values():
-        net.add_node(node_data['id'], 
-                    label=node_data['label'],
-                    title=node_data['title'],
-                    color=node_data['color'],
-                    size=node_data['size'])
-    
-    for edge_data in all_edge_data.values():
-        net.add_edge(edge_data['from'], edge_data['to'],
-                    id=edge_data['id'],
-                    label=edge_data['label'],
-                    title=edge_data['title'],
-                    color=edge_data['color'],
-                    width=edge_data['width'],
-                    smooth=edge_data['smooth'])
-    
-    # Set network options
-        net.set_options("""
-        var options = {
-            "physics": {
-                "enabled": false
-            },
-            "nodes": {
-                "font": {"size": 12, "color": "#000000"}
-            },
-            "edges": {
-                "font": {"size": 10}
-            },
-            "interaction": {
-                "dragNodes": true,
-                "dragView": true,
-                "zoomView": true
-            }
-        }
-        """)
-    
-    # Save the HTML
+    # Save the basic HTML
     net.show(output_path)
     
-    # Add stabilization script
+    # Read the HTML and add entry controls
     with open(output_path, 'r') as f:
         html_content = f.read()
     
-    # Create sequence pattern legend
-    sequence_legend = ""
-    for pattern in sequence_patterns:
-        sequence_legend += f"""
-        <div style="margin-bottom: 8px; padding: 5px; border-left: 4px solid {pattern.color};">
-            <strong>{pattern.name}</strong><br>
-            <small style="color: #666;">{pattern.description}</small>
+    # Create the enhanced HTML with entry controls
+    entry_controls_html = f"""
+    <div id="entryControls" style="position: fixed; top: 10px; left: 10px; background: white; padding: 15px; border: 2px solid #ccc; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+        <h3 style="margin-top: 0;">Entry Range Filter</h3>
+        <div style="margin-bottom: 10px;">
+            <label for="startEntry">Start Entry:</label><br>
+            <input type="number" id="startEntry" min="0" max="{total_edges-1}" value="0" style="width: 200px;">
         </div>
-        """
-    
-    # Add sequence group statistics
-    sequence_stats = ""
-    if sequence_groups:
-        sequence_stats += "<hr><div style='font-size: 12px;'><strong>Detected Groups:</strong><br>"
-        for group_id, group_info in sequence_groups.items():
-            pattern_name = group_info['pattern'].name
-            edge_count = len(group_info['edges'])
-            confidence = group_info['confidence']
-            sequence_stats += f"Group {group_id}: {pattern_name} ({edge_count} edges, {confidence:.1%})<br>"
-        sequence_stats += "</div>"
-    
-    # Create the interactive controls HTML and JavaScript
-    interactive_controls = f"""
-    <!-- Interactive Entry Controls -->
-    <div id="entryControls" style="position: fixed; top: 10px; left: 10px; background: white; padding: 20px; border: 2px solid #ccc; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 400px;">
-        <h3 style="margin-top: 0;">Entry Interval Controls</h3>
-        
-        <div style="margin-bottom: 15px;">
-            <label for="startEntry">Start Entry:</label>
-            <input type="range" id="startEntry" min="0" max="{total_entries-1}" value="0" style="width: 200px;">
-            <span id="startEntryValue">0</span>
+        <div style="margin-bottom: 10px;">
+            <label for="endEntry">End Entry:</label><br>
+            <input type="number" id="endEntry" min="1" max="{total_edges}" value="{total_edges}" style="width: 200px;">
         </div>
-        
-        <div style="margin-bottom: 15px;">
-            <label for="endEntry">End Entry:</label>
-            <input type="range" id="endEntry" min="0" max="{total_entries-1}" value="{min(total_entries-1, 100)}" style="width: 200px;">
-            <span id="endEntryValue">{min(total_entries-1, 100)}</span>
+        <div style="margin-bottom: 10px;">
+            <button onclick="filterByEntryRange()" style="background: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">Apply Filter</button>
+            <button onclick="resetEntryFilter()" style="background: #f44336; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-left: 5px;">Reset</button>
         </div>
-        
-        <div style="margin-bottom: 15px;">
-            <label>
-                <input type="checkbox" id="showMaliciousOnly"> Show Only Malicious Entries
-            </label>
+        <div style="margin-bottom: 10px;">
+            <label for="entryWindow">Quick Windows:</label><br>
+            <select id="entryWindow" onchange="applyQuickEntryWindow()" style="width: 200px;">
+                <option value="">Select preset...</option>
+                <option value="10">First 10 entries</option>
+                <option value="25">First 25 entries</option>
+                <option value="50">First 50 entries</option>
+                <option value="100">First 100 entries</option>
+                <option value="250">First 250 entries</option>
+                <option value="500">First 500 entries</option>
+                <option value="last_50">Last 50 entries</option>
+                <option value="last_100">Last 100 entries</option>
+                <option value="middle_100">Middle 100 entries</option>
+                <option value="all">All entries</option>
+            </select>
         </div>
-        
-        <div style="margin-bottom: 15px;">
-            <label>
-                <input type="checkbox" id="showSequencesOnly"> Show Only Sequence Patterns
-            </label>
+        <div style="margin-bottom: 10px;">
+            <label for="windowSize">Sliding Window Size:</label><br>
+            <input type="number" id="windowSize" min="10" max="500" value="100" style="width: 100px;">
+            <button onclick="nextWindow()" style="background: #2196F3; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer; margin-left: 5px;">Next →</button>
+            <button onclick="prevWindow()" style="background: #2196F3; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer; margin-left: 5px;">← Prev</button>
         </div>
-        
-        <div style="margin-bottom: 15px;">
-            <button onclick="resetView()" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Reset View</button>
-            <button onclick="showAll()" style="background: #2196F3; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Show All</button>
-        </div>
-        
-        <div style="font-size: 12px; color: #666;">
-            <div>Total Entries: {total_entries}</div>
-            <div id="visibleStats">Visible: 0 entries, 0 nodes</div>
-            <div>Malicious Entries: {len([e for e in all_edge_data.values() if e['is_malicious']])}</div>
-            <div>Sequence Groups: {len(sequence_groups)}</div>
+        <div id="entryInfo" style="font-size: 12px; color: #666;">
+            Total Entries: {total_edges}<br>
+            <span id="currentEntryInfo">Showing: All entries (0-{total_edges-1})</span>
         </div>
     </div>
-
-    <!-- Sequence Pattern Legend -->
-    <div id="sequenceLegend" style="position: fixed; top: 10px; right: 10px; background: white; padding: 15px; border: 2px solid #ccc; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 300px;">
-        <h3 style="margin-top: 0;">Sequence Patterns</h3>
-        <div style="max-height: 300px; overflow-y: auto;">
-            {sequence_legend}
-        </div>
-        {sequence_stats}
-    </div>
-
-    <script type="text/javascript">
-        // Global variables for filtering
-        let allNodesData = """ + json.dumps(all_nodes) + """;
-        let allEdgesData = """ + json.dumps(all_edge_data) + """;
-        let currentNetwork = null;
+    
+    <script>
+    var allEdges = [];
+    var originalNodes = [];
+    var totalEntries = {total_edges};
+    var currentWindowStart = 0;
+    
+    // Store original data after network is initialized
+    network.on("afterDrawing", function() {{
+        if (allEdges.length === 0) {{
+            allEdges = network.body.data.edges.get();
+            originalNodes = network.body.data.nodes.get();
+        }}
+    }});
+    
+    function filterByEntryRange() {{
+        var startEntry = parseInt(document.getElementById('startEntry').value);
+        var endEntry = parseInt(document.getElementById('endEntry').value);
         
-        // Wait for network to be ready
-        document.addEventListener('DOMContentLoaded', function() {{
-            setTimeout(function() {{
-                if (typeof network !== 'undefined') {{
-                    currentNetwork = network;
-                    initializeControls();
-                    updateVisualization(); // Initial update
-                    
-                    // Disable physics after stabilization
-                    network.on("stabilizationIterationsDone", function () {{
-                        network.setOptions({{physics: {{enabled: false}}}});
-                        console.log("Physics disabled after stabilization");
-                    }});
-                    
-                    setTimeout(function() {{
-                        network.setOptions({{physics: {{enabled: false}}}});
-                        console.log("Physics disabled after timeout");
-                    }}, 10000);
-                }}
-            }}, 1000);
+        if (isNaN(startEntry) || isNaN(endEntry)) {{
+            alert('Please enter valid entry numbers');
+            return;
+        }}
+        
+        if (startEntry >= endEntry) {{
+            alert('Start entry must be less than end entry');
+            return;
+        }}
+        
+        if (startEntry < 0 || endEntry > totalEntries) {{
+            alert('Entry range must be between 0 and ' + totalEntries);
+            return;
+        }}
+        
+        filterEdgesByEntryRange(startEntry, endEntry);
+        updateEntryInfo(startEntry, endEntry);
+    }}
+    
+    function filterEdgesByEntryRange(startEntry, endEntry) {{
+        // Filter edges by entry index
+        var filteredEdges = allEdges.filter(function(edge) {{
+            var entryIdx = edge.entry_index;
+            if (entryIdx === null || entryIdx === undefined) {{
+                return false;
+            }}
+            return entryIdx >= startEntry && entryIdx < endEntry;
         }});
         
-        function initializeControls() {{
-            const startSlider = document.getElementById('startEntry');
-            const endSlider = document.getElementById('endEntry');
-            const maliciousCheckbox = document.getElementById('showMaliciousOnly');
-            const sequenceCheckbox = document.getElementById('showSequencesOnly');
-            
-            // Add event listeners
-            startSlider.addEventListener('input', function() {{
-                document.getElementById('startEntryValue').textContent = this.value;
-                // Ensure start <= end
-                if (parseInt(this.value) > parseInt(endSlider.value)) {{
-                    endSlider.value = this.value;
-                    document.getElementById('endEntryValue').textContent = this.value;
-                }}
-                updateVisualization();
-            }});
-            
-            endSlider.addEventListener('input', function() {{
-                document.getElementById('endEntryValue').textContent = this.value;
-                // Ensure end >= start
-                if (parseInt(this.value) < parseInt(startSlider.value)) {{
-                    startSlider.value = this.value;
-                    document.getElementById('startEntryValue').textContent = this.value;
-                }}
-                updateVisualization();
-            }});
-            
-            maliciousCheckbox.addEventListener('change', updateVisualization);
-            sequenceCheckbox.addEventListener('change', updateVisualization);
+        // Get nodes that are connected by filtered edges
+        var connectedNodes = new Set();
+        filteredEdges.forEach(function(edge) {{
+            connectedNodes.add(edge.from);
+            connectedNodes.add(edge.to);
+        }});
+        
+        // Filter nodes to only show connected ones
+        var filteredNodes = originalNodes.filter(function(node) {{
+            return connectedNodes.has(node.id);
+        }});
+        
+        // Update the network
+        network.setData({{
+            nodes: filteredNodes,
+            edges: filteredEdges
+        }});
+        
+        // Update display info
+        document.getElementById('currentEntryInfo').innerHTML = 
+            'Showing: ' + filteredEdges.length + ' edges, ' + filteredNodes.length + ' nodes (entries ' + startEntry + '-' + (endEntry-1) + ')';
+    }}
+    
+    function resetEntryFilter() {{
+        // Reset to show all data
+        network.setData({{
+            nodes: originalNodes,
+            edges: allEdges
+        }});
+        
+        // Reset entry inputs
+        document.getElementById('startEntry').value = 0;
+        document.getElementById('endEntry').value = totalEntries;
+        document.getElementById('entryWindow').value = '';
+        currentWindowStart = 0;
+        
+        document.getElementById('currentEntryInfo').innerHTML = 'Showing: All entries (0-' + (totalEntries-1) + ')';
+    }}
+    
+    function applyQuickEntryWindow() {{
+        var windowSelect = document.getElementById('entryWindow');
+        var windowType = windowSelect.value;
+        
+        if (!windowType) return;
+        
+        var startEntry, endEntry;
+        
+        if (windowType === 'all') {{
+            resetEntryFilter();
+            return;
+        }} else if (windowType.startsWith('last_')) {{
+            var size = parseInt(windowType.split('_')[1]);
+            startEntry = Math.max(0, totalEntries - size);
+            endEntry = totalEntries;
+        }} else if (windowType === 'middle_100') {{
+            var size = 100;
+            startEntry = Math.max(0, Math.floor((totalEntries - size) / 2));
+            endEntry = Math.min(totalEntries, startEntry + size);
+        }} else {{
+            var size = parseInt(windowType);
+            startEntry = 0;
+            endEntry = Math.min(totalEntries, size);
         }}
         
-        function updateVisualization() {{
-            if (!currentNetwork) return;
-            
-            const startEntry = parseInt(document.getElementById('startEntry').value);
-            const endEntry = parseInt(document.getElementById('endEntry').value);
-            const showMaliciousOnly = document.getElementById('showMaliciousOnly').checked;
-            const showSequencesOnly = document.getElementById('showSequencesOnly').checked;
-            
-            // Filter edges based on entry range and filters
-            const visibleEdges = [];
-            const usedNodes = new Set();
-            
-            Object.values(allEdgesData).forEach(edge => {{
-                const entryIndex = edge.entry_index;
-                const inRange = entryIndex >= startEntry && entryIndex <= endEntry;
-                const passesFilter = (!showMaliciousOnly || edge.is_malicious) && 
-                                   (!showSequencesOnly || edge.sequence_pattern !== 'Ungrouped');
-                
-                if (inRange && passesFilter) {{
-                    visibleEdges.push(edge);
-                    usedNodes.add(edge.from);
-                    usedNodes.add(edge.to);
-                }}
-            }});
-            
-            // Filter nodes to only those used by visible edges
-            const visibleNodes = [];
-            usedNodes.forEach(nodeId => {{
-                if (allNodesData[nodeId]) {{
-                    visibleNodes.push(allNodesData[nodeId]);
-                }}
-            }});
-            
-            // Update the network
-            const nodes = new vis.DataSet(visibleNodes);
-            const edges = new vis.DataSet(visibleEdges);
-            
-            currentNetwork.setData({{ nodes: nodes, edges: edges }});
-            
-            // Update statistics
-            document.getElementById('visibleStats').textContent = 
-                `Visible: ${{visibleEdges.length}} entries, ${{visibleNodes.length}} nodes`;
-        }}
+        // Update input fields
+        document.getElementById('startEntry').value = startEntry;
+        document.getElementById('endEntry').value = endEntry;
         
-        function resetView() {{
-            document.getElementById('startEntry').value = 0;
-            document.getElementById('endEntry').value = {min(total_entries-1, 100)};
-            document.getElementById('startEntryValue').textContent = '0';
-            document.getElementById('endEntryValue').textContent = '{min(total_entries-1, 100)}';
-            document.getElementById('showMaliciousOnly').checked = false;
-            document.getElementById('showSequencesOnly').checked = false;
-            updateVisualization();
-        }}
+        // Apply filter
+        filterEdgesByEntryRange(startEntry, endEntry);
+        updateEntryInfo(startEntry, endEntry);
+        currentWindowStart = startEntry;
+    }}
+    
+    function nextWindow() {{
+        var windowSize = parseInt(document.getElementById('windowSize').value) || 100;
+        var newStart = Math.min(currentWindowStart + windowSize, totalEntries - windowSize);
+        var newEnd = Math.min(newStart + windowSize, totalEntries);
         
-        function showAll() {{
-            document.getElementById('startEntry').value = 0;
-            document.getElementById('endEntry').value = {total_entries-1};
-            document.getElementById('startEntryValue').textContent = '0';
-            document.getElementById('endEntryValue').textContent = '{total_entries-1}';
-            document.getElementById('showMaliciousOnly').checked = false;
-            document.getElementById('showSequencesOnly').checked = false;
-            updateVisualization();
-        }}
+        document.getElementById('startEntry').value = newStart;
+        document.getElementById('endEntry').value = newEnd;
+        
+        filterEdgesByEntryRange(newStart, newEnd);
+        updateEntryInfo(newStart, newEnd);
+        currentWindowStart = newStart;
+    }}
+    
+    function prevWindow() {{
+        var windowSize = parseInt(document.getElementById('windowSize').value) || 100;
+        var newStart = Math.max(currentWindowStart - windowSize, 0);
+        var newEnd = Math.min(newStart + windowSize, totalEntries);
+        
+        document.getElementById('startEntry').value = newStart;
+        document.getElementById('endEntry').value = newEnd;
+        
+        filterEdgesByEntryRange(newStart, newEnd);
+        updateEntryInfo(newStart, newEnd);
+        currentWindowStart = newStart;
+    }}
+    
+    function updateEntryInfo(startEntry, endEntry) {{
+        document.getElementById('currentEntryInfo').innerHTML = 
+            'Filtered: entries ' + startEntry + ' to ' + (endEntry-1) + ' (' + (endEntry-startEntry) + ' entries)';
+    }}
+    
+    // Disable physics after stabilization to prevent spinning
+    network.on("stabilizationIterationsDone", function () {{
+        network.setOptions({{physics: {{enabled: false}}}});
+    }});
+    
+    // Fallback: disable physics after timeout
+    setTimeout(function() {{
+        network.setOptions({{physics: {{enabled: false}}}});
+    }}, 15000);
     </script>
     """
     
-    # Insert the controls before the closing body tag
-    html_content = html_content.replace('</body>', interactive_controls + '</body>')
+    # Insert the entry controls before the closing body tag
+    html_content = html_content.replace('</body>', entry_controls_html + '</body>')
     
+    # Write the enhanced HTML
     with open(output_path, 'w') as f:
         f.write(html_content)
     
-    print(f"📊 Sequence Analysis Summary:")
-    print(f"   Found {len(sequence_groups)} sequence groups")
-    print(f"   Total entries: {total_entries}")
-    print(f"   Malicious entries: {len([e for e in all_edge_data.values() if e['is_malicious']])}")
+    print(f"Interactive entry visualization saved to: {output_path}")
+    print(f"Features:")
+    print(f"  - Entry range selector (start/end entry numbers)")
+    print(f"  - Quick preset windows (10, 25, 50, 100, 250, 500 entries)")
+    print(f"  - Last N entries, middle entries options")
+    print(f"  - Sliding window navigation (Next/Previous)")
+    print(f"  - Real-time filtering of edges and nodes")
+    print(f"  - Shows only connected nodes in filtered view")
     
     return output_path
 
-
-
+# =========================================================================
+# SEQUENCE ANALYSIS FUNCTIONS
+# =========================================================================
 
 def find_sequence_groups(G, edge_metadata, sequence_patterns=None, max_gap=1, target_file=None, enable_result_matching=None):
     """
@@ -1814,3 +1830,327 @@ def match_operation_to_patterns(operation, operation_list, result=None, result_l
                 if operation_matches:
                     matched_indices.append(i)
         return matched_indices
+    
+def apply_sequence_coloring(G, edge_metadata, sequence_groups):
+    """Apply sequence group coloring to graph edges"""
+    
+    # Create edge to group mapping
+    edge_to_group = {}
+    for group_id, group_info in sequence_groups.items():
+        for edge in group_info['edges']:
+            edge_to_group[edge] = group_id
+    
+    # Apply coloring to edges
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        edge_tuple = (src, dst, key)
+        
+        if edge_tuple in edge_to_group:
+            group_id = edge_to_group[edge_tuple]
+            group_info = sequence_groups[group_id]
+            
+            # Set sequence group attributes
+            data['sequence_group'] = group_id
+            data['sequence_pattern'] = group_info['pattern'].name
+            data['sequence_color'] = group_info['pattern'].color
+            data['sequence_confidence'] = group_info['confidence']
+            data['sequence_description'] = group_info['pattern'].description
+        else:
+            # Default coloring for ungrouped edges
+            data['sequence_group'] = None
+            data['sequence_pattern'] = 'Ungrouped'
+            data['sequence_color'] = '#CCCCCC'  # Gray
+            data['sequence_confidence'] = 0.0
+            data['sequence_description'] = 'No pattern match'
+
+
+
+
+def create_sequence_grouped_visualization(G, edge_metadata, malicious_specs=None, 
+                                        sequence_patterns=None, output_path="sequence_grouped_graph.html", sequence_groups=None):
+    """Create visualization with sequence-based edge coloring"""
+    
+    if sequence_patterns is None:
+        sequence_patterns = ATTACK_SEQUENCE_PATTERNS
+    
+    if sequence_groups is None:
+        sequence_groups = find_sequence_groups(G, edge_metadata, sequence_patterns=sequence_patterns)
+    
+    # Apply sequence coloring
+    apply_sequence_coloring(G, edge_metadata, sequence_groups)
+    
+    print(f"📊 Found {len(sequence_groups)} sequence groups:")
+    for group_id, group_info in sequence_groups.items():
+        pattern_name = group_info['pattern'].name
+        edge_count = len(group_info['edges'])
+        confidence = group_info['confidence']
+        target_pair = group_info.get('target_pair', 'Unknown')
+        print(f"   Group {group_id}: {group_info['pattern'].name} ({edge_count} edges, confidence: {confidence:.2f})")
+        print(f"      Target: {target_pair}")
+        print(f"      Matched operations: {', '.join(group_info['matched_operations'])}")
+        print(f"      Completeness: {group_info.get('completeness', 0):.2f}")
+        print(f"      Strict order: {group_info['pattern'].strict_order}")
+    
+    # Apply REAPr analysis if malicious specs provided - skip for now if not available
+    if malicious_specs:
+        try:
+            malicious_processes, malicious_resources, contaminated, impacts = apply_reapr_to_simplified_graph(
+                G, edge_metadata, malicious_specs
+            )
+        except:
+            print("⚠️ REAPr analysis not available, continuing without it")
+            malicious_specs = None
+    
+    # Create visualization
+    from pyvis.network import Network
+    net = Network(notebook=True, height="700px", width="100%", bgcolor="#ffffff", directed=True)
+    
+    # Add nodes with REAPr or default styling
+    for node, data in G.nodes(data=True):
+        node_type = data.get('type', 'Unknown')
+        node_name = data.get('name', 'Unknown')
+        reapr_label = data.get('reapr_label', 'BENIGN')
+        
+        # Node coloring (REAPr takes precedence over sequence groups)
+        if malicious_specs and reapr_label != 'BENIGN':
+            if reapr_label == 'MALICIOUS_RESOURCE':
+                color = '#FF0000'  # Bright red
+                size = 25
+            elif reapr_label == 'CONTAMINATED':
+                color = '#FF4400'  # Red-orange
+                size = 20
+            elif reapr_label == 'IMPACT':
+                color = '#FF8800'  # Orange
+                size = 18
+            else:
+                color = '#CCCCCC'  # Gray
+                size = 15
+        else:
+            # Default node coloring by type
+            if node_type == 'Process':
+                color = '#90EE90'  # Light green
+                size = 20
+            elif node_type == 'Registry':
+                color = '#87CEEB'  # Sky blue
+                size = 15
+            elif node_type == 'File':
+                color = '#DDA0DD'  # Plum
+                size = 15
+            elif node_type == 'Network':
+                color = '#F0E68C'  # Khaki
+                size = 15
+            else:
+                color = '#D3D3D3'  # Light gray
+                size = 12
+        
+        title = f"{node_type}: {node_name}"
+        if malicious_specs:
+            title += f"\nREAPr Label: {reapr_label}"
+        
+        net.add_node(node, label=node_name, title=title, color=color, size=size)
+    
+    # Add edges with sequence-based coloring
+    edge_count = {}
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        edge_pair = (src, dst)
+        edge_count[edge_pair] = edge_count.get(edge_pair, 0) + 1
+        n = edge_count[edge_pair]
+        
+        # Get edge metadata and sequence info
+        edge_meta = edge_metadata.get((src, dst, key), {})
+        operation = edge_meta.get('operation', 'unknown')
+        line_id = edge_meta.get('line_id', 'N/A')
+        timestamp = edge_meta.get('timestamp', data.get('timestamp', 'N/A'))
+        
+        # Get sequence coloring
+        sequence_color = data.get('sequence_color', '#CCCCCC')
+        sequence_pattern = data.get('sequence_pattern', 'Ungrouped')
+        sequence_confidence = data.get('sequence_confidence', 0.0)
+        sequence_description = data.get('sequence_description', 'No pattern match')
+        
+        # Create edge label with sequence info
+        if sequence_pattern != 'Ungrouped':
+            edge_label = f"{operation}\n[{sequence_pattern}]"
+        else:
+            edge_label = operation
+        
+        if n > 1:
+            edge_label += f" #{n}"
+        
+        # Edge styling based on sequence
+        if sequence_pattern != 'Ungrouped':
+            edge_width = 2 + int(sequence_confidence * 3)  # Thicker for higher confidence
+            opacity = 0.6 + (sequence_confidence * 0.4)    # More opaque for higher confidence
+        else:
+            edge_width = 1
+            opacity = 0.4
+        
+        edge_color = {'color': sequence_color, 'opacity': opacity}
+        
+        # Handle multiple edges with curves
+        smooth_type = 'curvedCW' if (n % 2 == 1) else 'curvedCCW'
+        roundness = min(0.6, 0.1 + 0.05 * (n - 1))
+        smooth = {"enabled": True, "type": smooth_type, "roundness": roundness}
+        
+        # Create detailed title with sequence information
+        title_parts = [
+            f"Operation: {operation}",
+            f"Line ID: {line_id}",
+            f"Timestamp: {timestamp}",
+            f"Target: {src} → {dst}",
+            f"Sequence Pattern: {sequence_pattern}",
+            f"Pattern Description: {sequence_description}"
+        ]
+        
+        if sequence_confidence > 0:
+            title_parts.append(f"Confidence: {sequence_confidence:.2f}")
+            # Find which group this edge belongs to and show target pair info
+            for group_id, group_info in sequence_groups.items():
+                if (src, dst, key) in group_info['edges']:
+                    target_pair = group_info.get('target_pair', (src, dst))
+                    title_parts.append(f"Sequence Target: {target_pair}")
+                    break
+        
+        edge_title = "\n".join(title_parts)
+        
+        net.add_edge(src, dst,
+                    id=f"{src}->{dst}#{key}",
+                    label=edge_label,
+                    title=edge_title,
+                    color=edge_color,
+                    width=edge_width,
+                    smooth=smooth)
+    
+    # Set options to match standard configuration used by other graphs
+    net.set_options("""
+    var options = {
+      "physics": {
+        "enabled": true,
+        "stabilization": {
+          "enabled": true,
+          "iterations": 100
+        }
+      },
+      "nodes": {
+        "font": {"size": 12, "color": "#000000"}
+      },
+      "edges": {
+        "font": {"size": 10}
+      },
+      "interaction": {
+        "dragNodes": true,
+        "dragView": true,
+        "zoomView": true
+      }
+    }
+    """)
+    
+    # Save the HTML
+    net.show(output_path)
+    
+    # Add stabilization callback and sequence legend to HTML
+    with open(output_path, 'r') as f:
+        html_content = f.read()
+    
+    # Add standard stabilization script used by other graphs
+    stabilization_script = """
+    <script type="text/javascript">
+    // Disable physics after stabilization to allow free movement
+    document.addEventListener('DOMContentLoaded', function() {
+        // Wait for network to be available
+        setTimeout(function() {
+            if (typeof network !== 'undefined') {
+                network.on("stabilizationIterationsDone", function () {
+                    network.setOptions({physics: {enabled: false}});
+                    console.log("Physics disabled after stabilization - graph will stop spinning");
+                });
+                
+                // Fallback: disable physics after 10 seconds regardless
+                setTimeout(function() {
+                    network.setOptions({physics: {enabled: false}});
+                    console.log("Physics disabled after timeout - graph will stop spinning");
+                }, 10000);
+            }
+        }, 1000);
+    });
+    </script>
+    """
+    
+    # Create legend HTML
+    legend_html = f"""
+    <div id="sequenceLegend" style="position: fixed; top: 10px; right: 10px; background: white; padding: 15px; border: 2px solid #ccc; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 300px;">
+        <h3 style="margin-top: 0;">Sequence Patterns</h3>
+        <div style="max-height: 400px; overflow-y: auto;">
+    """
+    
+    # Add pattern legend items
+    for pattern in sequence_patterns:
+        legend_html += f"""
+        <div style="margin-bottom: 8px; padding: 5px; border-left: 4px solid {pattern.color};">
+            <strong>{pattern.name}</strong><br>
+            <small style="color: #666;">{pattern.description}</small>
+        </div>
+        """
+    
+    # Add group statistics
+    legend_html += f"""
+        </div>
+        <hr style="margin: 10px 0;">
+        <div style="font-size: 12px;">
+            <strong>Detected Groups:</strong><br>
+    """
+    
+    for group_id, group_info in sequence_groups.items():
+        pattern_name = group_info['pattern'].name
+        edge_count = len(group_info['edges'])
+        confidence = group_info['confidence']
+        target_pair = group_info.get('target_pair', 'Unknown')
+        legend_html += f"Group {group_id}: {pattern_name} ({edge_count} edges, {confidence:.1%})<br>"
+        legend_html += f"&nbsp;&nbsp;&nbsp;&nbsp;Target: {target_pair}<br>"
+    
+    legend_html += """
+        </div>
+    </div>
+    """
+    
+    # Insert stabilization script and legend before closing body tag
+    enhanced_content = stabilization_script + legend_html
+    html_content = html_content.replace('</body>', enhanced_content + '</body>')
+    
+    # Write enhanced HTML
+    with open(output_path, 'w') as f:
+        f.write(html_content)
+    
+    return output_path, sequence_groups
+
+# =========================================================================
+# SEQUENCE PATTERN CONFIGURATION FUNCTIONS
+# =========================================================================
+
+def add_custom_sequence_pattern(name, operation_list, color, description, min_length=1, strict_order=True, results=None):
+    """Add a custom sequence pattern to the global patterns list"""
+    if results is None:
+        # Default to SUCCESS for all operations if no results specified
+        results = ["SUCCESS"] * len(operation_list)
+    
+    custom_pattern = SequencePattern(
+        name=name,
+        operations=operation_list,  # Now expects exact operation names
+        color=color,
+        description=description,
+        min_length=min_length,
+        strict_order=strict_order,
+        results=results
+    )
+    
+    # Add to global patterns (avoid duplicates)
+    global ATTACK_SEQUENCE_PATTERNS
+    existing_names = [p.name for p in ATTACK_SEQUENCE_PATTERNS]
+    if name not in existing_names:
+        ATTACK_SEQUENCE_PATTERNS.append(custom_pattern)
+        print(f"✅ Added custom sequence pattern: {name}")
+        print(f"   Operations: {operation_list}")
+        print(f"   Strict order: {strict_order}")
+    else:
+        print(f"⚠️ Pattern {name} already exists")
+    
+    return custom_pattern
