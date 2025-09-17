@@ -168,21 +168,6 @@ def list_node_edges(G, node):
         inbound_edges.append((src, node, key, data))
     return outbound_edges, inbound_edges
 
-def get_unique_operations_from_graph(G, edge_metadata, limit=None):
-    """Get a list of unique operation names from the graph to help define patterns"""
-    
-    operations = set()
-    for src, dst, key, data in G.edges(keys=True, data=True):
-        edge_meta = edge_metadata.get((src, dst, key), {})
-        operation = edge_meta.get('operation', data.get('operation', 'unknown'))
-        operations.add(operation)
-
-    unique_ops = sorted(list(operations))
-    
-    if limit:
-        unique_ops = unique_ops[:limit]
-    
-    return unique_ops
 
 # =========================================================================
 # CORE GRAPH OPERATIONS
@@ -297,7 +282,7 @@ def generate_query_graph(campaign_events, per_event=False, return_full_graph=Fal
     return G, edge_metadata
 
 # =========================================================================
-# ANALYSIS FUNCTIONS (REAPr, Pattern Analysis)
+# REAPr ANALYSIS FUNCTIONS
 # =========================================================================
 
 def apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs):
@@ -440,701 +425,11 @@ def apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs):
 
     return list(malicious_processes), list(malicious_resources), contaminated_nodes, impact_nodes
 
+
 # =========================================================================
 # VISUALIZATION FUNCTIONS
 # =========================================================================
 
-def create_reapr_visualization(G, edge_metadata, malicious_specs, output_path, show_contaminated=False, show_only_malicious=True):
-    """Create REAPr visualization showing ONLY malicious and contaminated nodes (filtered view) for simplified graph"""
-    # Apply selective labeling for simplified graph
-    malicious_processes, malicious_resources, contaminated, impacts = apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs)
-    
-    # Filter graph to show only malicious and contaminated nodes if requested
-    if show_only_malicious:
-        malicious_nodes = set()
-        for node, data in G.nodes(data=True):
-            label = data.get('reapr_label', 'BENIGN')
-            if label in ['MALICIOUS', 'ROOT_CAUSE']:
-                malicious_nodes.add(node)
-
-        print(f"Filtered graph to show only malicious nodes: {len(malicious_nodes)} nodes")
-        G_filtered = G.subgraph(malicious_nodes).copy()
-    elif show_contaminated:
-        relevant_nodes = set()
-        for node, data in G.nodes(data=True):
-            label = data.get('reapr_label', 'BENIGN')
-            if label in ['MALICIOUS', 'ROOT_CAUSE', 'CONTAMINATED']:
-                relevant_nodes.add(node)
-        # Also include nodes connected to relevant nodes to show attack paths
-        extended_nodes = set(relevant_nodes)
-        for node in relevant_nodes:
-            extended_nodes.update(G.predecessors(node))
-            extended_nodes.update(G.successors(node))
-        # Create subgraph with only relevant nodes
-        G_filtered = G.subgraph(extended_nodes).copy()
-        print(f"Filtered graph: {G_filtered.number_of_nodes()} nodes, {G_filtered.number_of_edges()} edges (from {G.number_of_nodes()} total)")
-    else:
-        G_filtered = G
-    
-    net = Network(notebook=True, height="900px", width="100%", bgcolor="#ffffff", directed=True)
-
-    # print the number of nodes and edges in the filtered graph
-    print(f"Filtered graph: {G_filtered.number_of_nodes()} nodes, {G_filtered.number_of_edges()} edges (from {G.number_of_nodes()} total)")
-    
-    # Manually add all nodes with enhanced styling (avoiding net.from_nx() to preserve duplicate edges)
-    for node, data in G_filtered.nodes(data=True):
-        node_type = data.get('type', 'Unknown')
-        node_name = data.get('name', 'Unknown')
-        label = data.get('reapr_label', 'BENIGN')
-        is_known_malicious = data.get('is_known_malicious', False)
-        malicious_ops = data.get('malicious_operations', [])
-        
-        # Base styling by node type
-        if node_type == 'Process':
-            base_color = '#90EE90'  # Light green
-            size = 20
-            title = f"Process: {node_name}"
-        elif node_type == 'Registry':
-            base_color = '#87CEEB'  # Sky blue
-            size = 15
-            title = f"Registry: {node_name}"
-        elif node_type == 'File':
-            base_color = '#DDA0DD'  # Plum
-            size = 15
-            title = f"File: {node_name}"
-        elif node_type == 'Network':
-            base_color = '#F0E68C'  # Khaki
-            size = 15
-            title = f"Network: {node_name}"
-        else:
-            base_color = '#D3D3D3'  # Light gray
-            size = 12
-            title = f"Unknown: {node_name}"
-        
-        # Override color based on REAPr status
-        if label == 'ROOT_CAUSE' or (label == 'MALICIOUS' and is_known_malicious):
-            color = '#8B0000'  # Dark red for known malicious
-            size += 15
-            border_width = 6
-            border_color = '#000000'
-            title = f"KNOWN MALICIOUS {node_type}: {node_name}"
-        elif label == 'MALICIOUS':
-            color = '#FF4444'  # Red for other malicious
-            size += 10
-            border_width = 4
-            border_color = '#8B0000'
-            title = f"MALICIOUS {node_type}: {node_name}"
-        elif label == 'CONTAMINATED':
-            color = '#FFA500'  # Orange for contaminated
-            size += 5
-            border_width = 3
-            border_color = '#FF4500'
-            title = f"CONTAMINATED {node_type}: {node_name}"
-        else:
-            color = base_color
-            border_width = 1
-            border_color = '#666666'
-        
-        # Add malicious operation details to title
-        if malicious_ops:
-            title += f"\n\nMalicious Operations:"
-            for op in malicious_ops:
-                marked_as = op.get('marked_as', 'both')
-                title += f"\n  • {op['operation']} -> {op['target_type']}: {op['target_name']} (marked as {marked_as})"
-        
-        # Impact node styling
-        if G_filtered.nodes[node].get('is_impact'):
-            border_width = max(border_width, 4)
-            border_color = '#800080'  # Purple border for impact nodes
-        
-        net.add_node(node, 
-                    label=node_name, 
-                    title=f"{label} {node_type}: {node_name}",
-                    color=color, 
-                    size=size,
-                    borderWidth=border_width,
-                    borderColor=border_color)
-    
-    # Manually add ALL edges to preserve duplicates (similar to malicious_edge_visualization)
-    edge_count = {}  # Track multiple edges between same nodes
-    for edge_idx, (src, dst, key, data) in enumerate(G_filtered.edges(keys=True, data=True)):
-        # Create unique edge identifier
-        edge_pair = (src, dst)
-        edge_count[edge_pair] = edge_count.get(edge_pair, 0) + 1
-        n = edge_count[edge_pair]
-        
-        # Get edge metadata
-        line_id = data.get('line_id', 'N/A')
-        operation = data.get('operation', 'unknown')
-        timestamp = data.get('timestamp', 'N/A')
-
-        unique_id = f"{src}¡÷{dst}#{key}_{edge_idx}"
-        
-        # Create edge label showing which occurrence this is
-        if n > 1:
-            edge_label = f"{operation} #{n} (line {line_id})"
-        else:
-            edge_label = f"{operation} (line {line_id})"
-        
-        
-        
-        # Enhanced edge styling based on malicious content
-        malicious_line_ids = [spec[0] for spec in malicious_specs if isinstance(spec, (tuple, list))]
-        
-        # Check if both src and dst nodes are malicious
-        src_is_malicious = G_filtered.nodes[src].get('reapr_label', 'BENIGN') in ['MALICIOUS', 'ROOT_CAUSE']
-        dst_is_malicious = G_filtered.nodes[dst].get('reapr_label', 'BENIGN') in ['MALICIOUS', 'ROOT_CAUSE']
-        
-        if src_is_malicious and dst_is_malicious:
-            edge_color = {'color': '#8B0000', 'opacity': 1.0}
-            edge_width = 8 if line_id in malicious_line_ids else 3
-            edge_title = f'Malicious-to-Malicious: {edge_label}\nLine ID: {line_id}\nTimestamp: {timestamp}'
-        elif any(resource_type in edge_label for resource_type in ['Registry', 'File', 'Network']):
-            edge_color = {'color': '#4169E1', 'opacity': 0.7}
-            edge_width = 3
-            edge_title = f'Shared resource: {edge_label}\nLine ID: {line_id}\nTimestamp: {timestamp}'
-        else:
-            edge_color = {'color': '#666666', 'opacity': 0.6}
-            edge_width = 2 + (n % 3)  # Vary width slightly for multiple edges
-            edge_title = f'Operation: {operation}\nLine ID: {line_id}\nKey: {key}\nTimestamp: {timestamp}'
-        
-        # Per-edge smooth settings to separate parallel edges
-        smooth_type = 'curvedCW' if (n % 2 == 1) else 'curvedCCW'
-        roundness = min(0.6, 0.15 + 0.08 * (n - 1))
-        smooth = {"enabled": True, "type": smooth_type, "roundness": roundness}
-        
-        # Add edge with unique ID and properties to force pyvis to show it separately
-        net.add_edge(src, dst, 
-                    id=unique_id,  # Unique ID forces separate edges
-                    label=edge_label,
-                    title=edge_title,
-                    color=edge_color,
-                    width=edge_width,
-                    smooth=smooth)
-    # Set visualization options (enable free 2D movement by disabling hierarchical layout)
-    net.set_options("""
-    var options = {
-      "layout": {
-        "improvedLayout": true,
-        "hierarchical": {
-          "enabled": false
-        }
-      },
-      "physics": {
-        "enabled": true,
-        "forceAtlas2Based": {
-          "gravitationalConstant": -50,
-          "centralGravity": 0.01,
-          "springLength": 200,
-          "springConstant": 0.08
-        },
-        "maxVelocity": 50,
-        "solver": "forceAtlas2Based",
-        "timestep": 0.35,
-        "stabilization": {
-          "enabled": true,
-          "iterations": 150,
-          "updateInterval": 50,
-          "onlyDynamicEdges": false,
-          "fit": true
-        },
-        "adaptiveTimestep": true
-      },
-      "nodes": {
-        "font": {"size": 12, "color": "#000000"}
-      },
-      "edges": {
-        "font": {"size": 10}
-      }
-    }
-    """)
-    net.show(output_path)
-    
-    # Add JavaScript to disable physics after stabilization for free movement
-    with open(output_path, 'r') as f:
-        html_content = f.read()
-    
-    # Insert the physics disabling JavaScript
-    html_content = html_content.replace(
-        '</script>',
-        '''
-        // Disable physics after stabilization to allow free movement
-        network.on("stabilizationIterationsDone", function () {
-            network.setOptions({physics: {enabled: false}});
-            console.log("Physics disabled after stabilization - nodes can now be moved freely");
-        });
-        
-        // Fallback: disable physics after 10 seconds regardless
-        setTimeout(function() {
-            network.setOptions({physics: {enabled: false}});
-            console.log("Physics disabled after timeout - nodes can now be moved freely");
-        }, 10000);
-        </script>'''
-    )
-    
-    with open(output_path, 'w') as f:
-        f.write(html_content)
-    
-    return output_path
-
-
-def analyze_attack_patterns(G, node2events):
-    """Analyze attack patterns following REAPr methodology"""
-    
-    print("=== REAPr Attack Pattern Analysis ===\n")
-    
-    # 1. Process genealogy analysis
-    process_chains = []
-    for node, data in G.nodes(data=True):
-        if data.get('type') == 'TTP' and data.get('reapr_label') != 'BENIGN':
-            proc_name = data.get('proc_name', 'Unknown')
-            label = data.get('reapr_label', 'BENIGN')
-            process_chains.append((node, proc_name, label))
-    
-    print(f"1. Process Chain Analysis:")
-    print(f"   Total suspicious processes: {len(process_chains)}")
-    
-    # Group by process name
-    proc_groups = {}
-    for node, proc_name, label in process_chains:
-        if proc_name not in proc_groups:
-            proc_groups[proc_name] = []
-        proc_groups[proc_name].append((node, label))
-    
-    for proc_name, instances in proc_groups.items():
-        root_count = sum(1 for _, label in instances if label == 'ROOT_CAUSE')
-        contam_count = sum(1 for _, label in instances if label == 'CONTAMINATED')
-        print(f"   - {proc_name}: {root_count} root cause(s), {contam_count} contaminated")
-    
-    # 2. Attack technique frequency
-    print(f"\n2. Attack Technique Frequency:")
-    technique_freq = {}
-    for events_list in node2events.values():
-        for event in events_list:
-            technique = event.get('label', 'Unknown')
-            technique_freq[technique] = technique_freq.get(technique, 0) + 1
-    
-    sorted_techniques = sorted(technique_freq.items(), key=lambda x: x[1], reverse=True)
-    for technique, count in sorted_techniques[:10]:  # Top 10
-        print(f"   - {technique}: {count} occurrences")
-    
-    # 3. Attack progression timeline
-    print(f"\n3. Attack Progression Analysis:")
-    all_events = []
-    for ttp_node, events_list in node2events.items():
-        for event in events_list:
-            all_events.append({
-                'timestamp': event['timestamp'],
-                'ttp_node': ttp_node,
-                'technique': event.get('label', 'Unknown'),
-                'relation': event['relation']
-            })
-    
-    all_events.sort(key=lambda x: x['timestamp'])
-    if all_events:
-        start_time = all_events[0]['timestamp']
-        end_time = all_events[-1]['timestamp']
-        duration = end_time - start_time
-        print(f"   - Attack duration: {duration} seconds ({duration/60:.1f} minutes)")
-        print(f"   - Total events: {len(all_events)}")
-        print(f"   - Events per minute: {len(all_events)/(duration/60 + 1):.1f}")
-    
-    return process_chains, technique_freq, all_events
-
-def export_reapr_labels(G, output_path="./Dataset/QueryGraph/GenerateCampaign/reapr_labels.csv"):
-    """Export REAPr-style labels in CSV format compatible with their methodology"""
-    labels_data = []
-    for node, data in G.nodes(data=True):
-        # Only include nodes with 'time_order' key
-        if 'time_order' in data:
-            labels_data.append({
-                'uuid': node,
-                'name': data.get('proc_name', data.get('name', 'Unknown')),
-                'type': data.get('type', 'Unknown'),
-                'reapr_label': data.get('reapr_label', 'BENIGN'),
-                'is_root_cause': data.get('is_root_cause', False),
-                'is_impact': data.get('is_impact', False),
-                'time_order': data.get('time_order', 0)
-            })
-    if not labels_data:
-        print("No nodes with 'time_order' found. Exporting all nodes without sorting.")
-        for node, data in G.nodes(data=True):
-            labels_data.append({
-                'uuid': node,
-                'name': data.get('proc_name', data.get('name', 'Unknown')),
-                'type': data.get('type', 'Unknown'),
-                'reapr_label': data.get('reapr_label', 'BENIGN'),
-                'is_root_cause': data.get('is_root_cause', False),
-                'is_impact': data.get('is_impact', False),
-                'time_order': 0
-            })
-    df = pd.DataFrame(labels_data)
-    if 'time_order' in df.columns:
-        df = df.sort_values('time_order')
-    df.to_csv(output_path, index=False)
-    print(f"REAPr labels exported to: {output_path}")
-    print(f"Total labeled entities: {len(df)}")
-    print(f"Label distribution:")
-    print(df['reapr_label'].value_counts())
-    return output_path
-
-
-# Utility: List all inbound and outbound edges for a given node in the graph
-def create_malicious_edge_visualization(G, edge_metadata, malicious_specs, output_path="./Dataset/QueryGraph/GenerateCampaign/malicious_edges.html"):
-    """
-    Create pyvis visualization that shows ALL edges between explicitly malicious nodes only.
-    Excludes contaminated nodes - focuses on direct attack connections only.
-    Merged to virtualization, just for archive purposes.
-    """
-
-    # First, apply REAPr labeling to identify malicious nodes
-    malicious_processes, malicious_resources, contaminated, impacts = apply_reapr_to_simplified_graph(G, edge_metadata, malicious_specs)
-    
-    # Collect only explicitly malicious nodes (exclude contaminated)
-    malicious_nodes = set()
-    for node, data in G.nodes(data=True):
-        label = data.get('reapr_label', 'BENIGN')
-        if label in ['MALICIOUS', 'ROOT_CAUSE']:
-            malicious_nodes.add(node)
-    
-    print(f"Found {len(malicious_nodes)} explicitly malicious nodes (excluding contaminated)")
-    
-    # Create network - IMPORTANT: Set directed=True for directed edges
-    net = Network(notebook=True, height="800px", width="100%", bgcolor="#ffffff", directed=True)
-    
-    for node in malicious_nodes:
-        data = G.nodes[node]
-        node_type = data.get('type', 'Unknown')
-        node_name = data.get('name', 'Unknown')
-        label = data.get('reapr_label', 'BENIGN')
-        is_known_malicious = data.get('is_known_malicious', False)
-        
-        if label == 'ROOT_CAUSE' or (label == 'MALICIOUS' and is_known_malicious):
-            color = '#8B0000'  # Dark red for known malicious
-            size = 30
-            border_color = '#000000'
-            border_width = 6
-        elif label == 'MALICIOUS':
-            color = '#FF4444'  # Red for other malicious
-            size = 25
-            border_color = '#8B0000'
-            border_width = 4
-        elif label == 'CONTAMINATED':
-            color = '#FFA500'  # Orange for contaminated
-            size = 20
-            border_color = '#FF4500'
-            border_width = 3
-        else:
-            color = '#D3D3D3'  # Gray fallback
-            size = 15
-            border_color = '#666666'
-            border_width = 1
-        
-        net.add_node(node, 
-                    label=node_name, 
-                    title=f"{label} {node_type}: {node_name}",
-                    color=color, 
-                    size=size,
-                    borderWidth=border_width,
-                    borderColor=border_color)
-    
-    # Add ALL edges between malicious nodes
-    # Critically track edges by their actual NetworkX key, not just src/dst pair
-    edge_keys = {}  # Track edges by src, dst, and key
-    malicious_edge_count = 0
-    
-    # Get all edges between malicious nodes to check total count
-    malicious_edges = []
-    for src, dst, key, data in G.edges(keys=True, data=True):
-        if src in malicious_nodes and dst in malicious_nodes:
-            malicious_edges.append((src, dst, key, data))
-    
-    print(f"Found {len(malicious_edges)} total edges between malicious nodes")
-    
-    # Add each edge with unique properties to ensure they all display
-    for edge_idx, (src, dst, key, data) in enumerate(malicious_edges):
-        # Get edge metadata
-        line_id = data.get('line_id', 'N/A')
-        operation = data.get('operation', 'unknown')
-        timestamp = data.get('timestamp', 'N/A')
-        technique = data.get('technique', 'N/A')
-        
-        # Create a truly unique ID for each edge
-        unique_id = f"{src}¡÷{dst}#{key}_{edge_idx}"
-        
-        # Create a unique visual pattern for this edge
-        edge_num = edge_idx + 1  # 1-based edge number
-        
-        # Create distinct labels for each edge
-        if edge_idx > 0:
-            edge_label = f"{operation} #{edge_num}"
-        else:
-            edge_label = f"{operation}"
-        
-        edge_color = '#FF0000' 
-
-        edge_width = 2 
-        
-        # Create dramatically different curve patterns for each edge
-        # Higher roundness and alternating curve direction for each edge
-        direction = 'curvedCW' if (edge_idx % 2 == 0) else 'curvedCCW'
-        roundness = 0.2 + (0.15 * edge_idx)  # Increasingly curved
-        
-        # Set up the edge options - CRITICAL for multiple edge visibility
-        smooth = {
-            "enabled": True,
-            "type": direction,
-            "roundness": roundness,
-            "forceDirection": direction
-        }
-        
-        # Add the edge with its unique properties
-        net.add_edge(
-            src, 
-            dst,
-            id=unique_id,  # Unique ID per edge 
-            title=f"Operation: {operation}\nLine ID: {line_id}\nKey: {key}\nEdge #{edge_num}\nTimestamp: {timestamp}",
-            label=edge_label,
-            color=edge_color,
-            width=edge_width,
-            smooth=smooth,
-            # Add additional uniqueness to prevent edge merging
-
-        )
-        
-        print(f"Added edge {edge_idx+1}: {src} ¡÷ {dst} ({edge_label}) with ID {unique_id}")
-        malicious_edge_count += 1
-    
-    # Explicitly set options to ensure multiple edges show up (enable free 2D movement)
-    net.set_options("""
-    var options = {
-      "configure": {
-        "enabled": true
-      },
-      "interaction": {
-        "multiselect": true,
-        "hover": true
-      },
-      "layout": {
-        "improvedLayout": true,
-        "hierarchical": {
-          "enabled": false
-        }
-      },
-      "physics": {
-        "enabled": true,
-        "forceAtlas2Based": {
-          "gravitationalConstant": -50,
-          "centralGravity": 0.01,
-          "springLength": 200,
-          "springConstant": 0.08
-        },
-        "maxVelocity": 50,
-        "solver": "forceAtlas2Based",
-        "timestep": 0.35,
-        "stabilization": {
-          "enabled": true,
-          "iterations": 150,
-          "updateInterval": 50,
-          "onlyDynamicEdges": false,
-          "fit": true
-        },
-        "adaptiveTimestep": true
-      },
-      "nodes": {
-        "font": {"size": 12, "color": "#000000"}
-      },
-      "edges": {
-        "font": {"size": 10, "color": "#000000"},
-        "smooth": {
-          "enabled": true,
-          "type": "dynamic",
-          "roundness": 0.5
-        },
-        "scaling": {
-          "min": 1,
-          "max": 5
-        },
-        "arrows": {
-          "to": {
-            "enabled": true,
-            "scaleFactor": 0.5
-          }
-        },
-        "color": {
-          "inherit": false
-        },
-        "selfReference": {
-          "size": 20,
-          "angle": 0.7
-        }
-      }
-    }
-    """)
-    
-    net.show(output_path)
-    
-    # Add JavaScript to disable physics after stabilization for free movement
-    with open(output_path, 'r') as f:
-        html_content = f.read()
-    
-    # Insert the physics disabling JavaScript
-    html_content = html_content.replace(
-        '</script>',
-        '''
-        // Disable physics after stabilization to allow free movement
-        network.on("stabilizationIterationsDone", function () {
-            network.setOptions({physics: {enabled: false}});
-            console.log("Physics disabled after stabilization - nodes can now be moved freely");
-        });
-        
-        // Fallback: disable physics after 10 seconds regardless
-        setTimeout(function() {
-            network.setOptions({physics: {enabled: false}});
-            console.log("Physics disabled after timeout - nodes can now be moved freely");
-        }, 10000);
-        </script>'''
-    )
-    
-    with open(output_path, 'w') as f:
-        f.write(html_content)
-    
-    print(f"Added {len(malicious_nodes)} explicitly malicious nodes and {malicious_edge_count} edges between them")
-    print(f"Visualization saved to disk - view in browser for best results")
-    return output_path
-
-# =========================================================================
-# GRAPH SLICING AND WINDOWING FUNCTIONS
-# =========================================================================
-
-def slice_graph_by_time(G, edge_metadata=None, start_ts=None, end_ts=None, inclusive=True):
-    """
-    Return a new MultiDiGraph with only edges whose timestamp is within [start_ts, end_ts).
-    - G: networkx.MultiDiGraph
-    - edge_metadata: dict mapping (src,dst,key) -> metadata (optional)
-    - start_ts, end_ts: timestamps (seconds)
-    - inclusive: if True uses <= end_ts, else uses < end_ts
-    """
-    if start_ts is None or end_ts is None:
-        raise ValueError("start_ts and end_ts must be provided")
-    
-    newG = nx.MultiDiGraph()
-    
-    for src, dst, key, data in G.edges(keys=True, data=True):
-        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
-        if ts is None:
-            continue
-        
-        if inclusive:
-            ok = (start_ts <= ts <= end_ts)
-        else:
-            ok = (start_ts <= ts < end_ts)
-        
-        if ok:
-            # Ensure nodes exist with attributes
-            if src not in newG:
-                newG.add_node(src, **G.nodes[src])
-            if dst not in newG:
-                newG.add_node(dst, **G.nodes[dst])
-            # Copy edge with all attributes
-            newG.add_edge(src, dst, key=key, **data)
-    
-    return newG
-
-def slice_graph_by_entry_count(G, edge_metadata=None, start_entry=0, end_entry=None):
-    """
-    Return a new MultiDiGraph with edges from start_entry to end_entry (by chronological order).
-    - G: networkx.MultiDiGraph
-    - edge_metadata: dict mapping (src,dst,key) -> metadata (optional)
-    - start_entry: starting entry index (0-based)
-    - end_entry: ending entry index (exclusive), if None uses all remaining entries
-    """
-    # Get all edges with their timestamps or line_ids for ordering
-    edge_list = []
-    for src, dst, key, data in G.edges(keys=True, data=True):
-        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
-        line_id = _get_edge_line_id(src, dst, key, data, edge_metadata)
-        
-        # Use timestamp if available, otherwise line_id, otherwise edge order
-        sort_key = ts if ts is not None else (line_id if line_id is not None else len(edge_list))
-        edge_list.append((sort_key, src, dst, key, data))
-    
-    # Sort edges chronologically
-    edge_list.sort(key=lambda x: x[0])
-    
-    # Slice the edge list
-    if end_entry is None:
-        end_entry = len(edge_list)
-    
-    sliced_edges = edge_list[start_entry:end_entry]
-    
-    # Create new graph with sliced edges
-    newG = nx.MultiDiGraph()
-    for _, src, dst, key, data in sliced_edges:
-        # Ensure nodes exist with attributes
-        if src not in newG:
-            newG.add_node(src, **G.nodes[src])
-        if dst not in newG:
-            newG.add_node(dst, **G.nodes[dst])
-        # Copy edge with all attributes
-        newG.add_edge(src, dst, key=key, **data)
-    
-    return newG
-
-def sliding_entry_windows(G, edge_metadata=None, window_size=100, step=50):
-    """
-    Generator that yields (window_start_idx, window_end_idx, subgraph) for consecutive entry windows.
-    - window_size: number of entries per window
-    - step: number of entries to advance each window
-    """
-    total_edges = G.number_of_edges()
-    
-    if total_edges == 0:
-        return
-    
-    start_idx = 0
-    while start_idx < total_edges:
-        end_idx = min(start_idx + window_size, total_edges)
-        subgraph = slice_graph_by_entry_count(G, edge_metadata=edge_metadata, 
-                                            start_entry=start_idx, end_entry=end_idx)
-        yield start_idx, end_idx, subgraph
-        start_idx += step
-        if start_idx >= total_edges:
-            break
-
-def get_graph_time_range(G, edge_metadata=None):
-    """Get the min and max timestamps from the graph"""
-    all_ts = []
-    for src, dst, key, data in G.edges(keys=True, data=True):
-        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
-        if ts is not None:
-            all_ts.append(int(ts))
-    
-    if not all_ts:
-        return None, None
-    
-    return min(all_ts), max(all_ts)
-
-def sliding_time_windows(G, edge_metadata=None, window_size=60, step=30, start_ts=None, end_ts=None):
-    """
-    Generator that yields (window_start, window_end, subgraph) for consecutive time windows.
-    window_size and step are in seconds.
-    """
-    # Get time range if not provided
-    if start_ts is None or end_ts is None:
-        min_ts, max_ts = get_graph_time_range(G, edge_metadata)
-        if min_ts is None:
-            return
-        start_ts = min_ts if start_ts is None else start_ts
-        end_ts = max_ts if end_ts is None else end_ts
-    
-    t = start_ts
-    while t <= end_ts:
-        window_end = min(t + window_size, end_ts)
-        subgraph = slice_graph_by_time(G, edge_metadata=edge_metadata, 
-                                     start_ts=t, end_ts=window_end, inclusive=True)
-        yield t, window_end, subgraph
-        t += step
 
 def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=None, output_path="interactive_entry_graph.html"):
     """Create an interactive visualization with entry range selection"""
@@ -1291,22 +586,6 @@ def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=Non
         <div style="margin-bottom: 10px;">
             <button onclick="filterByEntryRange()" style="background: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">Apply Filter</button>
             <button onclick="resetEntryFilter()" style="background: #f44336; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-left: 5px;">Reset</button>
-        </div>
-        <div style="margin-bottom: 10px;">
-            <label for="entryWindow">Quick Windows:</label><br>
-            <select id="entryWindow" onchange="applyQuickEntryWindow()" style="width: 200px;">
-                <option value="">Select preset...</option>
-                <option value="10">First 10 entries</option>
-                <option value="25">First 25 entries</option>
-                <option value="50">First 50 entries</option>
-                <option value="100">First 100 entries</option>
-                <option value="250">First 250 entries</option>
-                <option value="500">First 500 entries</option>
-                <option value="last_50">Last 50 entries</option>
-                <option value="last_100">Last 100 entries</option>
-                <option value="middle_100">Middle 100 entries</option>
-                <option value="all">All entries</option>
-            </select>
         </div>
         <div style="margin-bottom: 10px;">
             <label for="windowSize">Sliding Window Size:</label><br>
@@ -1501,6 +780,60 @@ def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=Non
     print(f"  - Shows only connected nodes in filtered view")
     
     return output_path
+
+
+# =========================================================================
+# GRAPH SLICING AND WINDOWING FUNCTIONS not used 
+# =========================================================================
+
+def slice_graph_by_time(G, edge_metadata=None, start_ts=None, end_ts=None, inclusive=True):
+    """
+    Return a new MultiDiGraph with only edges whose timestamp is within [start_ts, end_ts).
+    - G: networkx.MultiDiGraph
+    - edge_metadata: dict mapping (src,dst,key) -> metadata (optional)
+    - start_ts, end_ts: timestamps (seconds)
+    - inclusive: if True uses <= end_ts, else uses < end_ts
+    """
+    if start_ts is None or end_ts is None:
+        raise ValueError("start_ts and end_ts must be provided")
+    
+    newG = nx.MultiDiGraph()
+    
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        if ts is None:
+            continue
+        
+        if inclusive:
+            ok = (start_ts <= ts <= end_ts)
+        else:
+            ok = (start_ts <= ts < end_ts)
+        
+        if ok:
+            # Ensure nodes exist with attributes
+            if src not in newG:
+                newG.add_node(src, **G.nodes[src])
+            if dst not in newG:
+                newG.add_node(dst, **G.nodes[dst])
+            # Copy edge with all attributes
+            newG.add_edge(src, dst, key=key, **data)
+    
+    return newG
+
+def get_graph_time_range(G, edge_metadata=None):
+    """Get the min and max timestamps from the graph"""
+    all_ts = []
+    for src, dst, key, data in G.edges(keys=True, data=True):
+        ts = _get_edge_timestamp(src, dst, key, data, edge_metadata)
+        if ts is not None:
+            all_ts.append(int(ts))
+    
+    if not all_ts:
+        return None, None
+    
+    return min(all_ts), max(all_ts)
+
+
 
 # =========================================================================
 # SEQUENCE ANALYSIS FUNCTIONS
@@ -2122,35 +1455,3 @@ def create_sequence_grouped_visualization(G, edge_metadata, malicious_specs=None
     
     return output_path, sequence_groups
 
-# =========================================================================
-# SEQUENCE PATTERN CONFIGURATION FUNCTIONS
-# =========================================================================
-
-def add_custom_sequence_pattern(name, operation_list, color, description, min_length=1, strict_order=True, results=None):
-    """Add a custom sequence pattern to the global patterns list"""
-    if results is None:
-        # Default to SUCCESS for all operations if no results specified
-        results = ["SUCCESS"] * len(operation_list)
-    
-    custom_pattern = SequencePattern(
-        name=name,
-        operations=operation_list,  # Now expects exact operation names
-        color=color,
-        description=description,
-        min_length=min_length,
-        strict_order=strict_order,
-        results=results
-    )
-    
-    # Add to global patterns (avoid duplicates)
-    global ATTACK_SEQUENCE_PATTERNS
-    existing_names = [p.name for p in ATTACK_SEQUENCE_PATTERNS]
-    if name not in existing_names:
-        ATTACK_SEQUENCE_PATTERNS.append(custom_pattern)
-        print(f"✅ Added custom sequence pattern: {name}")
-        print(f"   Operations: {operation_list}")
-        print(f"   Strict order: {strict_order}")
-    else:
-        print(f"⚠️ Pattern {name} already exists")
-    
-    return custom_pattern
