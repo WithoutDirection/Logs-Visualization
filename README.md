@@ -17,19 +17,7 @@ This part should store each event's .pkl and edge metadata json, as well as the 
 ## `graph.ipynb`
 This notebook house the original implementation of visualizing the raw event logs. It is soon to be deprecated once the new implementation is completed.
 
-我真的不知道發生什麼事好像沒存到檔，結果現在最後一週的東西爛掉/不見了，我還在努力看要怎麼復原，不確定中研院那台電腦有沒有備份，先把我現在有的東西push上來。
-
-基本上現在可以跑的東西就是
-第一二個cell生成graph的檔案到Graph/
-最後一個cell可以生一個有sequence grouping的html(但是node一直抖我還沒修)
-entry interval的filtering壞掉了還沒修
-
-剩下不少function都丟去graphutil.py了
-
-Reapr 的實作在Loglabelling那個repo裡的版本還能用
-
-
-不過無論如何，有點想要重做一個完整GUI版本的如下，目前他會需要`graph.ipynb`第二個cell的輸出檔案，然後會產生一個新的資料夾`unified_viz_data/`，裡面會有處理過的json檔，然後可以用`unified_viz_server.py`來啟動一個server，之後用瀏覽器打開就可以看到一個比較完整的GUI，這個gui目前應該會有一個堪用的entry interval filter，但因為轉換的邏輯沒寫好，對於相同的edge會自動收合成一個edge
+有點想要重做一個完整GUI版本的如下，目前他會需要`graph.ipynb`第二個cell的輸出檔案，然後會產生一個新的資料夾`unified_viz_data/`，裡面會有處理過的json檔，然後可以用`unified_viz_server.py`來啟動一個server，之後用瀏覽器打開就可以看到一個比較完整的GUI，這個gui目前應該會有一個堪用的entry interval filter，但因為轉換的邏輯沒寫好，對於相同的edge會自動收合成一個edge
 
 
 ## `unified_viz_data_preparation.py`
