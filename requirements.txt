@@ -1,0 +1,7 @@
+# python == 3.10.12
+networkx
+tqdm
+pyvis
+pandas
+natsort
+matplotlib
