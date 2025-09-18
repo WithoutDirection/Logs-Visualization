@@ -28,7 +28,9 @@ from tqdm import tqdm
 
 # Import existing functions from the notebook
 try:
-    from graphutil import find_sequence_groups, ATTACK_SEQUENCE_PATTERNS
+    # from graphutil import find_sequence_groups, ATTACK_SEQUENCE_PATTERNS
+    from graphutil import find_sequence_groups
+    ATTACK_SEQUENCE_PATTERNS = []
 except ImportError:
     print("Could not import graphutil. Ensure graphutil.py is in the same directory.")
 
