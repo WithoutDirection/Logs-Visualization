@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Log Entry Visualization Tool</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        /* Modern CSS Grid Layout */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-areas: 
+                "header header"
+                "sidebar main"
+                "status status";
+            grid-template-columns: 320px 1fr;
+            grid-template-rows: 70px 1fr 35px;
+            height: 100vh;
+        }
+        
+        /* Header/Control Panel */
+        .header {
+            grid-area: header;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+            z-index: 100;
+        }
+        
+        .header select, .header input, .header button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        .header select {
+            min-width: 250px;
+            background: white;
+            color: #333;
+        }
+        
+        .header button {
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        
+        .header button:hover {
+            background: #45a049;
+            transform: translateY(-1px);
+        }
+        
+        .header button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .range-controls {
+            margin-left: auto;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .range-controls input {
+            width: 80px;
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            grid-area: sidebar;
+            background: white;
+            padding: 20px;
+            border-right: 2px solid #e0e0e0;
+            overflow-y: auto;
+            box-shadow: 3px 0 10px rgba(0,0,0,0.1);
+        }
+        
+        .sidebar h3 {
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 3px solid #667eea;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 25px;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 12px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 6px;
+            font-size: 13px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .stat-label {
+            font-weight: 500;
+            color: #495057;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            color: #212529;
+        }
+        
+        .filter-section {
+            margin-bottom: 25px;
+        }
+        
+        .filter-group {
+            margin-bottom: 15px;
+        }
+        
+        .filter-group label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+        
+        .filter-group label:hover {
+            color: #667eea;
+        }
+        
+        .filter-group input[type="checkbox"] {
+            transform: scale(1.3);
+            accent-color: #667eea;
+        }
+        
+        .slider-container {
+            margin: 15px 0;
+        }
+        
+        .slider-container label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #495057;
+        }
+        
+        .slider {
+            width: 100%;
+            margin: 8px 0;
+            height: 6px;
+            border-radius: 3px;
+            background: #ddd;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+        }
+        
+        .slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            border: none;
+        }
+        
+        /* Main visualization area */
+        .main {
+            grid-area: main;
+            background: white;
+            position: relative;
+            border-radius: 8px 0 0 0;
+            overflow: hidden;
+        }
+        
+        #graph-container {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 10;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .no-graph {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #666;
+        }
+        
+        .no-graph h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        /* Status bar */
+        .status {
+            grid-area: status;
+            background: #2c3e50;
+            color: white;
+            padding: 8px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .status-left {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .status-right {
+            display: flex;
+            gap: 15px;
+        }
+        
+        /* Legend */
+        .legend {
+            position: fixed;
+            top: 90px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            max-width: 280px;
+            max-height: 450px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .legend h4 {
+            margin-bottom: 12px;
+            color: #333;
+            font-size: 16px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+        }
+        
+        .legend-stats {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        /* Preset buttons */
+        .preset-controls {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .preset-btn {
+            padding: 5px 10px;
+            background: #e9ecef;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .preset-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        /* Toggle switches */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .toggle-slider {
+            background-color: #667eea;
+        }
+        
+        input:checked + .toggle-slider:before {
+            transform: translateX(26px);
+        }
+        
+        /* Responsive design */
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-areas: 
+                    "header"
+                    "main"
+                    "status";
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr 35px;
+            }
+            
+            .sidebar {
+                display: none;
+            }
+            
+            .header {
+                flex-wrap: wrap;
+                height: auto;
+                padding: 15px;
+            }
+            
+            .range-controls {
+                margin-left: 0;
+                margin-top: 10px;
+            }
+        }
+        
+        /* Notification messages */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 6px;
+            color: white;
+            z-index: 2000;
+            max-width: 400px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+        
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        
+        .notification.success {
+            background: #28a745;
+        }
+        
+        .notification.error {
+            background: #dc3545;
+        }
+        
+        .notification.warning {
+            background: #ffc107;
+            color: #212529;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header/Control Panel -->
+        <div class="header">
+            <select id="graph-selector">
+                <option value="">Select Event Graph...</option>
+            </select>
+            <button id="load-btn" disabled>Load Graph</button>
+            
+            <div class="range-controls">
+                <label style="color: white; font-size: 13px;">
+                    From Entry: <input type="number" id="entry-start" min="1" value="1">
+                </label>
+                <label style="color: white; font-size: 13px;">
+                    To Entry: <input type="number" id="entry-end" min="1" value="100">
+                </label>
+                <button id="apply-range-btn">Apply Range</button>
+            </div>
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <h3>? Graph Statistics</h3>
+            <div class="stats-grid" id="stats-container">
+                <div class="stat-item">
+                    <span class="stat-label">Nodes:</span>
+                    <span class="stat-value" id="stat-nodes">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Edges:</span>
+                    <span class="stat-value" id="stat-edges">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Entries:</span>
+                    <span class="stat-value" id="stat-entries">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Time Range:</span>
+                    <span class="stat-value" id="stat-time">-</span>
+                </div>
+            </div>
+            
+            <h3>? Visualization Options</h3>
+            <div class="filter-section">
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="sequence-grouping" checked>
+                        Enable Sequence Grouping
+                    </label>
+                    <label>
+                        <input type="checkbox" id="reapr-analysis">
+                        Show REAPr Analysis
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-legend">
+                        Show Legend
+                    </label>
+                </div>
+            </div>
+            
+            <h3>? Entry Range Presets</h3>
+            <div class="preset-controls">
+                <button class="preset-btn" data-range="10">First 10</button>
+                <button class="preset-btn" data-range="25">First 25</button>
+                <button class="preset-btn" data-range="50">First 50</button>
+                <button class="preset-btn" data-range="100">First 100</button>
+                <button class="preset-btn" data-range="250">First 250</button>
+                <button class="preset-btn" data-range="500">First 500</button>
+                <button class="preset-btn" data-range="all">All Entries</button>
+            </div>
+            
+            <h3>? Node Type Filters</h3>
+            <div class="filter-section" id="node-filters">
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="show-process" checked>
+                        Process Nodes
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-file" checked>
+                        File Nodes
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-registry" checked>
+                        Registry Nodes
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-network" checked>
+                        Network Nodes
+                    </label>
+                </div>
+            </div>
+            
+            <h3>?? Pattern Settings</h3>
+            <div class="filter-section" id="pattern-filters">
+                <div class="slider-container">
+                    <label>Confidence Threshold: <span id="confidence-value">60%</span></label>
+                    <input type="range" id="confidence-slider" class="slider" min="0" max="100" value="60">
+                </div>
+            </div>
+            
+            <h3>? Layout Options</h3>
+            <div class="filter-section">
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="enable-physics" checked>
+                        Enable Physics
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-edge-labels" checked>
+                        Show Edge Labels
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main visualization area -->
+        <div class="main">
+            <div id="graph-container">
+                <div class="no-graph">
+                    <h2>? Unified Log Entry Visualization</h2>
+                    <p>Select an event graph from the dropdown to begin visualization</p>
+                    <p style="margin-top: 10px; font-size: 14px; color: #888;">
+                        Features: Entry-based navigation ? Sequence pattern detection ? REAPr analysis ? Real-time filtering
+                    </p>
+                </div>
+            </div>
+            <div class="loading" id="loading" style="display: none;">
+                <div class="loading-spinner"></div>
+                <div>Loading graph data...</div>
+            </div>
+        </div>
+        
+        <!-- Status bar -->
+        <div class="status">
+            <div class="status-left">
+                <span id="status-text">Ready - Select a graph to begin</span>
+            </div>
+            <div class="status-right">
+                <span id="performance-text">Performance: -</span>
+                <span id="memory-text">Memory: -</span>
+                <span id="filter-text">Filters: None</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Legend -->
+    <div class="legend" id="legend">
+        <h4>Sequence Patterns</h4>
+        <div id="legend-content"></div>
+        <div class="legend-stats" id="legend-stats"></div>
+    </div>
+    
+    <!-- Notification container -->
+    <div id="notification" class="notification"></div>
+    
+    <script>
+        // Global variables
+        let currentGraph = null;
+        let currentData = null;
+        let network = null;
+        let graphMetadata = {};
+        let filteredData = null;
+        let lastUpdateTime = Date.now();
+        
+        // Configuration
+        const config = {
+            apiBaseUrl: './unified_viz_data', // Directory containing JSON files
+            defaultEntryRange: 100,
+            maxEntryRange: 10000,
+            physicsStabilizationTime: 5000
+        };
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApplication();
+        });
+        
+        async function initializeApplication() {
+            showNotification('Initializing visualization tool...', 'warning');
+            
+            try {
+                await loadMetadataIndex();
+                initializeGraphSelector();
+                setupEventListeners();
+                updateStatus('Ready - Select a graph to begin');
+                showNotification('Visualization tool ready!', 'success');
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showNotification('Failed to initialize: ' + error.message, 'error');
+            }
+        }
+        
+        async function loadMetadataIndex() {
+            try {
+                const response = await fetch(`${config.apiBaseUrl}/metadata_index.json`);
+                if (!response.ok) {
+                    throw new Error('Failed to load metadata index');
+                }
+                graphMetadata = await response.json();
+                console.log('Loaded metadata for', Object.keys(graphMetadata).length, 'graphs');
+            } catch (error) {
+                console.error('Error loading metadata:', error);
+                // Fallback to empty metadata for demo
+                graphMetadata = {};
+                throw error;
+            }
+        }
+        
+        function initializeGraphSelector() {
+            const selector = document.getElementById('graph-selector');
+            
+            // Clear existing options
+            selector.innerHTML = '<option value="">Select Event Graph...</option>';
+            
+            // Populate graph selector
+            Object.keys(graphMetadata).forEach(graphId => {
+                const meta = graphMetadata[graphId];
+                const option = document.createElement('option');
+                option.value = graphId;
+                option.textContent = `${meta.name} (${meta.stats.nodes} nodes, ${meta.stats.edges} edges)`;
+                selector.appendChild(option);
+            });
+            
+            console.log('Graph selector initialized with', Object.keys(graphMetadata).length, 'options');
+        }
+        
+        function setupEventListeners() {
+            // Graph selection
+            document.getElementById('graph-selector').addEventListener('change', function() {
+                const loadBtn = document.getElementById('load-btn');
+                loadBtn.disabled = !this.value;
+                
+                if (this.value) {
+                    updateStatsDisplay(graphMetadata[this.value]);
+                    updateEntryRange(graphMetadata[this.value].stats.entry_range);
+                }
+            });
+            
+            // Load button
+            document.getElementById('load-btn').addEventListener('click', function() {
+                const selectedGraph = document.getElementById('graph-selector').value;
+                if (selectedGraph) {
+                    loadGraph(selectedGraph);
+                }
+            });
+            
+            // Apply range button
+            document.getElementById('apply-range-btn').addEventListener('click', function() {
+                if (currentData) {
+                    applyEntryRange();
+                }
+            });
+            
+            // Preset buttons
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const range = this.dataset.range;
+                    applyPresetRange(range);
+                });
+            });
+            
+            // Feature toggles
+            document.getElementById('sequence-grouping').addEventListener('change', function() {
+                if (currentData) {
+                    updateVisualization();
+                }
+            });
+            
+            document.getElementById('reapr-analysis').addEventListener('change', function() {
+                if (currentData) {
+                    updateVisualization();
+                }
+            });
+            
+            document.getElementById('show-legend').addEventListener('change', function() {
+                const legend = document.getElementById('legend');
+                legend.style.display = this.checked ? 'block' : 'none';
+            });
+            
+            document.getElementById('enable-physics').addEventListener('change', function() {
+                if (network) {
+                    network.setOptions({physics: {enabled: this.checked}});
+                }
+            });
+            
+            document.getElementById('show-edge-labels').addEventListener('change', function() {
+                if (currentData) {
+                    updateVisualization();
+                }
+            });
+            
+            // Node filters
+            ['show-process', 'show-file', 'show-registry', 'show-network'].forEach(id => {
+                document.getElementById(id).addEventListener('change', function() {
+                    if (currentData) {
+                        updateVisualization();
+                    }
+                });
+            });
+            
+            // Confidence slider
+            document.getElementById('confidence-slider').addEventListener('input', function() {
+                document.getElementById('confidence-value').textContent = this.value + '%';
+                if (currentData) {
+                    updateVisualization();
+                }
+            });
+        }
+        
+        function updateStatsDisplay(metadata) {
+            document.getElementById('stat-nodes').textContent = metadata.stats.nodes.toLocaleString();
+            document.getElementById('stat-edges').textContent = metadata.stats.edges.toLocaleString();
+            document.getElementById('stat-entries').textContent = metadata.stats.entry_range[1].toLocaleString();
+            
+            const timeRange = metadata.stats.time_range;
+            if (timeRange[0] && timeRange[1] && timeRange[0] > 0) {
+                const start = new Date(timeRange[0] * 1000).toLocaleString();
+                const end = new Date(timeRange[1] * 1000).toLocaleString();
+                document.getElementById('stat-time').textContent = `${start} - ${end}`;
+            } else {
+                document.getElementById('stat-time').textContent = 'N/A';
+            }
+            
+            // Update REAPr checkbox availability
+            const reaprCheckbox = document.getElementById('reapr-analysis');
+            reaprCheckbox.disabled = !metadata.available_features.reapr_analysis;
+            if (!metadata.available_features.reapr_analysis) {
+                reaprCheckbox.checked = false;
+            }
+        }
+        
+        function updateEntryRange(entryRange) {
+            const maxEntries = entryRange[1];
+            document.getElementById('entry-start').max = maxEntries;
+            document.getElementById('entry-end').max = maxEntries;
+            document.getElementById('entry-end').value = Math.min(config.defaultEntryRange, maxEntries);
+        }
+        
+        function applyPresetRange(range) {
+            if (!currentData) return;
+            
+            const maxEntries = currentData.total_entries;
+            let startEntry = 1;
+            let endEntry = maxEntries;
+            
+            if (range === 'all') {
+                endEntry = maxEntries;
+            } else {
+                const rangeNum = parseInt(range);
+                endEntry = Math.min(rangeNum, maxEntries);
+            }
+            
+            document.getElementById('entry-start').value = startEntry;
+            document.getElementById('entry-end').value = endEntry;
+            
+            applyEntryRange();
+        }
+        
+        async function loadGraph(graphId) {
+            const startTime = performance.now();
+            showLoading(true);
+            updateStatus(`Loading graph: ${graphId}...`);
+            
+            try {
+                const response = await fetch(`${config.apiBaseUrl}/${graphId}.json`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load graph data: ${response.status}`);
+                }
+                
+                currentData = await response.json();
+                currentGraph = graphId;
+                
+                console.log('Loaded graph data:', {
+                    nodes: currentData.nodes.length,
+                    edges: currentData.edges.length,
+                    sequences: Object.keys(currentData.sequence_groups).length,
+                    malicious: currentData.malicious_specs.length
+                });
+                
+                updateVisualization();
+                updateLegend();
+                
+                const loadTime = performance.now() - startTime;
+                updateStatus(`Graph loaded successfully`);
+                updatePerformance(`${Math.round(loadTime)}ms`);
+                showNotification(`Graph ${graphId} loaded successfully!`, 'success');
+                
+            } catch (error) {
+                console.error('Error loading graph:', error);
+                updateStatus(`Error loading graph: ${error.message}`);
+                showNotification(`Failed to load graph: ${error.message}`, 'error');
+                
+                // For demo purposes, create mock data if file doesn't exist
+                if (error.message.includes('404') || error.message.includes('Failed to fetch')) {
+                    createMockVisualization(graphId);
+                }
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function createMockVisualization(graphId) {
+            console.log('Creating mock visualization for:', graphId);
+            
+            // Create mock data structure
+            currentData = {
+                graph_id: graphId,
+                nodes: [
+                    {id: 'proc1', label: 'powershell.exe', type: 'Process', title: 'Process: powershell.exe'},
+                    {id: 'file1', label: 'config.txt', type: 'File', title: 'File: config.txt'},
+                    {id: 'reg1', label: 'HKLM\\Software\\Test', type: 'Registry', title: 'Registry: HKLM\\Software\\Test'},
+                    {id: 'net1', label: '192.168.1.100', type: 'Network', title: 'Network: 192.168.1.100'}
+                ],
+                edges: [
+                    {src: 'proc1', dst: 'file1', operation: 'CreateFile', timestamp: Date.now() / 1000, entry_index: 1},
+                    {src: 'proc1', dst: 'reg1', operation: 'RegSetValue', timestamp: Date.now() / 1000 + 1, entry_index: 2},
+                    {src: 'proc1', dst: 'net1', operation: 'TCP Connect', timestamp: Date.now() / 1000 + 2, entry_index: 3}
+                ],
+                sequence_groups: {},
+                malicious_specs: [],
+                total_entries: 3
+            };
+            
+            updateVisualization();
+            updateStatus(`Mock graph loaded for: ${graphId}`);
+            showNotification('Demo mode: Mock graph loaded', 'warning');
+        }
+        
+        function updateVisualization() {
+            if (!currentData) return;
+            
+            const startTime = performance.now();
+            
+            // Apply filters to create filtered dataset
+            filteredData = applyFilters(currentData);
+            
+            // Create vis.js network
+            createNetworkVisualization(filteredData);
+            
+            const updateTime = performance.now() - startTime;
+            updatePerformance(`${Math.round(updateTime)}ms`);
+            updateFilterStatus();
+        }
+        
+        function applyFilters(data) {
+            const startEntry = parseInt(document.getElementById('entry-start').value) || 1;
+            const endEntry = parseInt(document.getElementById('entry-end').value) || data.total_entries;
+            const showSequenceGrouping = document.getElementById('sequence-grouping').checked;
+            const showReapr = document.getElementById('reapr-analysis').checked;
+            const confidenceThreshold = parseInt(document.getElementById('confidence-slider').value) / 100;
+            
+            // Filter edges by entry range
+            const filteredEdges = data.edges.filter(edge => 
+                edge.entry_index >= startEntry && edge.entry_index <= endEntry
+            );
+            
+            // Get involved nodes
+            const involvedNodeIds = new Set();
+            filteredEdges.forEach(edge => {
+                involvedNodeIds.add(edge.src);
+                involvedNodeIds.add(edge.dst);
+            });
+            
+            // Filter nodes by type
+            const nodeTypeFilters = {
+                'Process': document.getElementById('show-process').checked,
+                'File': document.getElementById('show-file').checked,
+                'Registry': document.getElementById('show-registry').checked,
+                'Network': document.getElementById('show-network').checked
+            };
+            
+            const filteredNodes = data.nodes.filter(node => 
+                involvedNodeIds.has(node.id) && nodeTypeFilters[node.type]
+            );
+            
+            return {
+                ...data,
+                nodes: filteredNodes,
+                edges: filteredEdges,
+                filters_applied: {
+                    entry_range: [startEntry, endEntry],
+                    sequence_grouping: showSequenceGrouping,
+                    reapr_analysis: showReapr,
+                    confidence_threshold: confidenceThreshold,
+                    node_types: nodeTypeFilters
+                }
+            };
+        }
+        
+        function createNetworkVisualization(data) {
+            const container = document.getElementById('graph-container');
+            
+            // Prepare nodes for vis.js
+            const visNodes = data.nodes.map(node => ({
+                id: node.id,
+                label: node.label,
+                title: node.title,
+                group: node.type.toLowerCase(),
+                color: getNodeColor(node),
+                size: getNodeSize(node)
+            }));
+            
+            // Prepare edges for vis.js
+            const visEdges = data.edges.map((edge, index) => ({
+                id: `${edge.src}-${edge.dst}-${index}`,
+                from: edge.src,
+                to: edge.dst,
+                label: document.getElementById('show-edge-labels').checked ? edge.operation : '',
+                title: createEdgeTooltip(edge),
+                color: getEdgeColor(edge),
+                width: getEdgeWidth(edge),
+                arrows: 'to'
+            }));
+            
+            const visData = {
+                nodes: new vis.DataSet(visNodes),
+                edges: new vis.DataSet(visEdges)
+            };
+            
+            const options = {
+                groups: {
+                    process: {color: {background: '#90EE90', border: '#6B8E6B'}, shape: 'box'},
+                    file: {color: {background: '#DDA0DD', border: '#B8860B'}, shape: 'ellipse'},
+                    registry: {color: {background: '#87CEEB', border: '#4682B4'}, shape: 'diamond'},
+                    network: {color: {background: '#F0E68C', border: '#DAA520'}, shape: 'triangle'}
+                },
+                physics: {
+                    enabled: document.getElementById('enable-physics').checked,
+                    stabilization: {
+                        enabled: true,
+                        iterations: 100
+                    },
+                    barnesHut: {
+                        gravitationalConstant: -2000,
+                        centralGravity: 0.1,
+                        springLength: 200,
+                        springConstant: 0.05
+                    }
+                },
+                interaction: {
+                    dragNodes: true,
+                    dragView: true,
+                    zoomView: true
+                },
+                nodes: {
+                    font: {size: 12, color: '#000000'},
+                    borderWidth: 2
+                },
+                edges: {
+                    font: {size: 10},
+                    smooth: {
+                        enabled: true,
+                        type: 'curvedCW',
+                        roundness: 0.2
+                    }
+                }
+            };
+            
+            // Create or update network
+            if (network) {
+                network.setData(visData);
+                network.setOptions(options);
+            } else {
+                network = new vis.Network(container, visData, options);
+                
+                // Setup event listeners
+                network.on("stabilizationIterationsDone", function () {
+                    if (document.getElementById('enable-physics').checked) {
+                        setTimeout(() => {
+                            network.setOptions({physics: {enabled: false}});
+                        }, config.physicsStabilizationTime);
+                    }
+                });
+                
+                network.on("click", function (params) {
+                    if (params.nodes.length > 0) {
+                        const nodeId = params.nodes[0];
+                        console.log('Node clicked:', nodeId);
+                    }
+                    if (params.edges.length > 0) {
+                        const edgeId = params.edges[0];
+                        console.log('Edge clicked:', edgeId);
+                    }
+                });
+            }
+            
+            updateMemoryUsage();
+        }
+        
+        function getNodeColor(node) {
+            // Default colors based on type
+            const typeColors = {
+                'Process': '#90EE90',
+                'File': '#DDA0DD',
+                'Registry': '#87CEEB',
+                'Network': '#F0E68C'
+            };
+            
+            // TODO: Add REAPr coloring when enabled
+            if (document.getElementById('reapr-analysis').checked) {
+                // Check if node is in malicious specs
+                // Return appropriate color based on REAPr analysis
+            }
+            
+            return typeColors[node.type] || '#D3D3D3';
+        }
+        
+        function getNodeSize(node) {
+            return node.type === 'Process' ? 25 : 20;
+        }
+        
+        function getEdgeColor(edge) {
+            // TODO: Apply sequence group coloring
+            if (document.getElementById('sequence-grouping').checked) {
+                // Check if edge is part of a sequence group
+                // Return appropriate color based on sequence pattern
+            }
+            
+            return '#848484'; // Default gray
+        }
+        
+        function getEdgeWidth(edge) {
+            return 2; // Default width
+        }
+        
+        function createEdgeTooltip(edge) {
+            return `Operation: ${edge.operation}\\nEntry: ${edge.entry_index}\\nTimestamp: ${new Date(edge.timestamp * 1000).toLocaleString()}`;
+        }
+        
+        function applyEntryRange() {
+            const startEntry = parseInt(document.getElementById('entry-start').value);
+            const endEntry = parseInt(document.getElementById('entry-end').value);
+            
+            if (startEntry > endEntry) {
+                showNotification('Start entry must be less than or equal to end entry', 'error');
+                return;
+            }
+            
+            if (endEntry - startEntry > config.maxEntryRange) {
+                showNotification(`Range too large! Maximum ${config.maxEntryRange} entries allowed`, 'warning');
+                return;
+            }
+            
+            updateStatus(`Applying entry range: ${startEntry} - ${endEntry}`);
+            updateVisualization();
+        }
+        
+        function updateLegend() {
+            const legend = document.getElementById('legend');
+            const content = document.getElementById('legend-content');
+            const stats = document.getElementById('legend-stats');
+            
+            if (!currentData) return;
+            
+            // Clear existing content
+            content.innerHTML = '';
+            
+            // Add sequence patterns if available
+            if (Object.keys(currentData.sequence_groups).length > 0) {
+                Object.values(currentData.sequence_groups).forEach(group => {
+                    const item = document.createElement('div');
+                    item.className = 'legend-item';
+                    item.innerHTML = `
+                        <div class="legend-color" style="background-color: ${group.pattern_color}"></div>
+                        <span>${group.pattern_name}</span>
+                    `;
+                    content.appendChild(item);
+                });
+            }
+            
+            // Add node type legend
+            const nodeTypes = [...new Set(currentData.nodes.map(n => n.type))];
+            nodeTypes.forEach(type => {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                const color = getNodeColor({type: type});
+                item.innerHTML = `
+                    <div class="legend-color" style="background-color: ${color}"></div>
+                    <span>${type} Nodes</span>
+                `;
+                content.appendChild(item);
+            });
+            
+            // Update stats
+            if (filteredData) {
+                stats.innerHTML = `
+                    <strong>Current View:</strong><br>
+                    Nodes: ${filteredData.nodes.length}<br>
+                    Edges: ${filteredData.edges.length}<br>
+                    Entry Range: ${filteredData.filters_applied.entry_range[0]}-${filteredData.filters_applied.entry_range[1]}
+                `;
+            }
+        }
+        
+        function showLoading(show) {
+            const loading = document.getElementById('loading');
+            const noGraph = document.querySelector('.no-graph');
+            
+            if (show) {
+                loading.style.display = 'block';
+                if (noGraph) noGraph.style.display = 'none';
+            } else {
+                loading.style.display = 'none';
+            }
+        }
+        
+        function updateStatus(message) {
+            document.getElementById('status-text').textContent = message;
+            lastUpdateTime = Date.now();
+        }
+        
+        function updatePerformance(time) {
+            document.getElementById('performance-text').textContent = `Performance: ${time}`;
+        }
+        
+        function updateMemoryUsage() {
+            if (performance.memory) {
+                const used = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
+                document.getElementById('memory-text').textContent = `Memory: ${used}MB`;
+            }
+        }
+        
+        function updateFilterStatus() {
+            if (!filteredData) return;
+            
+            const filters = filteredData.filters_applied;
+            const activeFilters = [];
+            
+            if (filters.entry_range[0] > 1 || filters.entry_range[1] < currentData.total_entries) {
+                activeFilters.push('Range');
+            }
+            if (filters.sequence_grouping) activeFilters.push('Sequence');
+            if (filters.reapr_analysis) activeFilters.push('REAPr');
+            
+            const filterText = activeFilters.length > 0 ? activeFilters.join(', ') : 'None';
+            document.getElementById('filter-text').textContent = `Filters: ${filterText}`;
+        }
+        
+        function showNotification(message, type = 'success') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${type}`;
+            
+            // Show notification
+            setTimeout(() => notification.classList.add('show'), 100);
+            
+            // Hide after 3 seconds
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+        
+        // Auto-update memory usage every 5 seconds
+        setInterval(updateMemoryUsage, 5000);
+    </script>
+</body>
+</html>
