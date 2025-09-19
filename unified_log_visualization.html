@@ -87,6 +87,27 @@
             width: 80px;
         }
         
+        .window-nav-buttons {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .window-nav-btn {
+            padding: 6px 10px !important;
+            font-size: 12px !important;
+            background: #FF9800 !important;
+            min-width: auto !important;
+        }
+        
+        .window-nav-btn:hover {
+            background: #F57C00 !important;
+        }
+        
+        .window-nav-btn:disabled {
+            background: #ccc !important;
+            cursor: not-allowed !important;
+        }
+        
         /* Sidebar */
         .sidebar {
             grid-area: sidebar;
@@ -465,6 +486,10 @@
             <button id="load-btn" disabled>Load Graph</button>
             
             <div class="range-controls">
+                <div class="window-nav-buttons">
+                    <button id="last-window-btn" class="window-nav-btn" title="Previous window">◀ Last</button>
+                    <button id="next-window-btn" class="window-nav-btn" title="Next window">Next ▶</button>
+                </div>
                 <label style="color: white; font-size: 13px;">
                     From Entry: <input type="number" id="entry-start" min="1" value="1">
                 </label>
@@ -640,6 +665,7 @@
                 await loadMetadataIndex();
                 initializeGraphSelector();
                 setupEventListeners();
+                updateWindowNavigationButtons(); // Initialize button states
                 updateStatus('Ready - Select a graph to begin');
                 showNotification('Visualization tool ready!', 'success');
             } catch (error) {
@@ -706,14 +732,35 @@
             document.getElementById('apply-range-btn').addEventListener('click', function() {
                 if (currentData) {
                     applyEntryRange();
+                    updateWindowNavigationButtons();
                 }
             });
+            
+            // Window navigation buttons
+            document.getElementById('last-window-btn').addEventListener('click', function() {
+                if (currentData) {
+                    navigateToLastWindow();
+                    updateWindowNavigationButtons();
+                }
+            });
+            
+            document.getElementById('next-window-btn').addEventListener('click', function() {
+                if (currentData) {
+                    navigateToNextWindow();
+                    updateWindowNavigationButtons();
+                }
+            });
+            
+            // Update navigation buttons when range inputs change
+            document.getElementById('entry-start').addEventListener('input', updateWindowNavigationButtons);
+            document.getElementById('entry-end').addEventListener('input', updateWindowNavigationButtons);
             
             // Preset buttons
             document.querySelectorAll('.preset-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
                     const range = this.dataset.range;
                     applyPresetRange(range);
+                    updateWindowNavigationButtons();
                 });
             });
             
@@ -898,6 +945,7 @@
             const updateTime = performance.now() - startTime;
             updatePerformance(`${Math.round(updateTime)}ms`);
             updateFilterStatus();
+            updateWindowNavigationButtons();
         }
         
         function applyFilters(data) {
@@ -1101,6 +1149,79 @@
             
             updateStatus(`Applying entry range: ${startEntry} - ${endEntry}`);
             updateVisualization();
+        }
+        
+        function navigateToLastWindow() {
+            if (!currentData) return;
+            
+            const currentStart = parseInt(document.getElementById('entry-start').value);
+            const currentEnd = parseInt(document.getElementById('entry-end').value);
+            const windowSize = currentEnd - currentStart + 1;
+            
+            // Calculate previous window
+            const newEnd = currentStart - 1;
+            const newStart = Math.max(1, newEnd - windowSize + 1);
+            
+            // Check if we can go back
+            if (newStart < 1 || newEnd < 1) {
+                showNotification('Already at the beginning of the dataset', 'info');
+                return;
+            }
+            
+            // Update the input fields
+            document.getElementById('entry-start').value = newStart;
+            document.getElementById('entry-end').value = newEnd;
+            
+            // Apply the new range
+            applyEntryRange();
+            
+            showNotification(`Moved to previous window: ${newStart} - ${newEnd}`, 'success');
+        }
+        
+        function navigateToNextWindow() {
+            if (!currentData) return;
+            
+            const currentStart = parseInt(document.getElementById('entry-start').value);
+            const currentEnd = parseInt(document.getElementById('entry-end').value);
+            const windowSize = currentEnd - currentStart + 1;
+            const maxEntries = currentData.total_entries;
+            
+            // Calculate next window
+            const newStart = currentEnd + 1;
+            const newEnd = Math.min(maxEntries, newStart + windowSize - 1);
+            
+            // Check if we can go forward
+            if (newStart > maxEntries) {
+                showNotification('Already at the end of the dataset', 'info');
+                return;
+            }
+            
+            // Update the input fields
+            document.getElementById('entry-start').value = newStart;
+            document.getElementById('entry-end').value = newEnd;
+            
+            // Apply the new range
+            applyEntryRange();
+            
+            showNotification(`Moved to next window: ${newStart} - ${newEnd}`, 'success');
+        }
+        
+        function updateWindowNavigationButtons() {
+            if (!currentData) {
+                document.getElementById('last-window-btn').disabled = true;
+                document.getElementById('next-window-btn').disabled = true;
+                return;
+            }
+            
+            const currentStart = parseInt(document.getElementById('entry-start').value);
+            const currentEnd = parseInt(document.getElementById('entry-end').value);
+            const maxEntries = currentData.total_entries;
+            
+            // Enable/disable Last Window button
+            document.getElementById('last-window-btn').disabled = currentStart <= 1;
+            
+            // Enable/disable Next Window button
+            document.getElementById('next-window-btn').disabled = currentEnd >= maxEntries;
         }
         
         function updateLegend() {

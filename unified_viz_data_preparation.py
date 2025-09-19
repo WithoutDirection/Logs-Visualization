@@ -52,7 +52,7 @@ class UnifiedVisualizationDataPreparator:
     
     def load_all_graph_metadata(self):
         """Load metadata for all available graphs"""
-        print(f"? Loading metadata for {len(self.available_graphs)} graphs...")
+        print(f"📊 Loading metadata for {len(self.available_graphs)} graphs...")
         
         for graph_file in tqdm(self.available_graphs, desc="Loading metadata"):
             graph_basename = os.path.basename(graph_file).replace('.pkl', '')
@@ -73,7 +73,13 @@ class UnifiedVisualizationDataPreparator:
                 
                 # Calculate time range from edge metadata
                 timestamps = []
+                operations = set()
                 for edge_id, data in edge_metadata_json.items():
+                    # Extract operation info
+                    if 'operation' in data and data['operation']:
+                        operations.add(data['operation'])
+                    
+                    # Extract timestamp info
                     if 'timestamp' in data and data['timestamp'] is not None:
                         try:
                             ts = float(data['timestamp'])
@@ -86,12 +92,7 @@ class UnifiedVisualizationDataPreparator:
                 
                 # Check available features
                 has_reapr = os.path.exists(predictions_file)
-                
-                # Detect available operations for sequence patterns
-                operations = set()
-                for edge_id, data in edge_metadata_json.items():
-                    if 'operation' in data and data['operation']:
-                        operations.add(data['operation'])
+                print(f"🔍 REAPr predictions available: {has_reapr}")
                 
                 # Check which sequence patterns are applicable
                 available_patterns = []
@@ -132,16 +133,16 @@ class UnifiedVisualizationDataPreparator:
                 print(f"? Error loading metadata for {graph_basename}: {e}")
                 continue
         
-        print(f"? Loaded metadata for {len(self.graph_metadata)} graphs")
+        print(f"🎉 Loaded metadata for {len(self.graph_metadata)} graphs")
         return self.graph_metadata
     
     def convert_edge_metadata_format(self, edge_metadata_json):
         """Convert edge metadata from JSON format to tuple-keyed format"""
         edge_metadata = {}
         for edge_id, data in edge_metadata_json.items():
-            # Handle different separator formats (��, ->, or #)
-            if '��' in edge_id:
-                parts = edge_id.split('��')
+            # Handle different separator formats (→, ->, or #)
+            if '→' in edge_id:
+                parts = edge_id.split('→')
             elif '->' in edge_id:
                 parts = edge_id.split('->')
             else:
@@ -153,8 +154,21 @@ class UnifiedVisualizationDataPreparator:
                 dst_key = parts[1].split('#')
                 if len(dst_key) >= 1:
                     dst = dst_key[0]
-                    key = int(dst_key[1]) if len(dst_key) > 1 and dst_key[1].isdigit() else dst_key[1] if len(dst_key) > 1 else 0
+                    # Handle key parsing more robustly
+                    if len(dst_key) > 1:
+                        key_str = dst_key[1]
+                        try:
+                            # Try to convert to integer first
+                            key = int(key_str)
+                        except ValueError:
+                            # If not an integer, keep as string
+                            key = key_str
+                    else:
+                        key = 0
                     edge_metadata[(src, dst, key)] = data
+            else:
+                # If parsing fails, log the problematic edge_id for debugging
+                print(f"⚠️  Could not parse edge_id: {edge_id}")
         return edge_metadata
     
     def load_reapr_predictions(self, predictions_file):

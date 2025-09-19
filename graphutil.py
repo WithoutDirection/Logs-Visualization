@@ -770,14 +770,6 @@ def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=Non
     with open(output_path, 'w') as f:
         f.write(html_content)
     
-    print(f"Interactive entry visualization saved to: {output_path}")
-    print(f"Features:")
-    print(f"  - Entry range selector (start/end entry numbers)")
-    print(f"  - Quick preset windows (10, 25, 50, 100, 250, 500 entries)")
-    print(f"  - Last N entries, middle entries options")
-    print(f"  - Sliding window navigation (Next/Previous)")
-    print(f"  - Real-time filtering of edges and nodes")
-    print(f"  - Shows only connected nodes in filtered view")
     
     return output_path
 
