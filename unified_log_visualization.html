@@ -592,6 +592,10 @@
                         <input type="checkbox" id="show-edge-labels" checked>
                         Show Edge Labels
                     </label>
+                    <label>
+                        <input type="checkbox" id="combine-edges" title="Combine multiple edges with the same operation between the same source and destination nodes. Shows count and merged metadata.">
+                        Combine Same Operations
+                    </label>
                 </div>
             </div>
         </div>
@@ -794,6 +798,12 @@
                 }
             });
             
+            document.getElementById('combine-edges').addEventListener('change', function() {
+                if (currentData) {
+                    updateVisualization();
+                }
+            });
+            
             // Node filters
             ['show-process', 'show-file', 'show-registry', 'show-network'].forEach(id => {
                 document.getElementById(id).addEventListener('change', function() {
@@ -948,17 +958,90 @@
             updateWindowNavigationButtons();
         }
         
+        /**
+         * Combines edges with the same operation between the same source and destination nodes.
+         * Creates combined edge objects with merged metadata including counts, timestamp ranges,
+         * line IDs, entry indices, and preserves sequence group information if present.
+         * 
+         * @param {Array} edges - Array of edge objects to combine
+         * @returns {Array} Array of combined edges, maintaining chronological order
+         */
+        function combineEdgesByOperation(edges) {
+            const combinedMap = new Map();
+            
+            // Group edges by src-dst-operation key
+            edges.forEach(edge => {
+                const key = `${edge.src}-${edge.dst}-${edge.operation}`;
+                
+                if (combinedMap.has(key)) {
+                    const existing = combinedMap.get(key);
+                    existing.combined_count++;
+                    existing.original_edges.push(edge);
+                    existing.line_ids.push(edge.line_id);
+                    existing.entry_indices.push(edge.entry_index);
+                    existing.timestamps.push(edge.timestamp);
+                    
+                    // Update timestamp range
+                    existing.timestamp_min = Math.min(existing.timestamp_min, edge.timestamp);
+                    existing.timestamp_max = Math.max(existing.timestamp_max, edge.timestamp);
+                    
+                    // Preserve sequence group info if any edge has it
+                    if (edge.sequence_group_id && !existing.sequence_group_id) {
+                        existing.sequence_group_id = edge.sequence_group_id;
+                        existing.sequence_color = edge.sequence_color;
+                        existing.sequence_pattern = edge.sequence_pattern;
+                    }
+                } else {
+                    // Create new combined edge entry
+                    const combinedEdge = {
+                        ...edge, // Copy all original properties
+                        id: key,
+                        combined_count: 1,
+                        original_edges: [edge],
+                        line_ids: [edge.line_id],
+                        entry_indices: [edge.entry_index],
+                        timestamps: [edge.timestamp],
+                        timestamp_min: edge.timestamp,
+                        timestamp_max: edge.timestamp,
+                        is_combined: false // Will be true for count > 1
+                    };
+                    combinedMap.set(key, combinedEdge);
+                }
+            });
+            
+            // Convert map to array and mark combined edges
+            const combinedEdges = Array.from(combinedMap.values()).map(edge => {
+                if (edge.combined_count > 1) {
+                    edge.is_combined = true;
+                    // Use the earliest entry_index for sorting
+                    edge.entry_index = Math.min(...edge.entry_indices);
+                }
+                return edge;
+            });
+            
+            // Sort by entry_index to maintain chronological order
+            combinedEdges.sort((a, b) => a.entry_index - b.entry_index);
+            
+            return combinedEdges;
+        }
+        
         function applyFilters(data) {
             const startEntry = parseInt(document.getElementById('entry-start').value) || 1;
             const endEntry = parseInt(document.getElementById('entry-end').value) || data.total_entries;
             const showSequenceGrouping = document.getElementById('sequence-grouping').checked;
             const showReapr = document.getElementById('reapr-analysis').checked;
             const confidenceThreshold = parseInt(document.getElementById('confidence-slider').value) / 100;
+            const combineEdges = document.getElementById('combine-edges').checked;
             
             // Filter edges by entry range
-            const filteredEdges = data.edges.filter(edge => 
+            let filteredEdges = data.edges.filter(edge => 
                 edge.entry_index >= startEntry && edge.entry_index <= endEntry
             );
+            
+            // Apply edge combination if enabled
+            if (combineEdges) {
+                filteredEdges = combineEdgesByOperation(filteredEdges);
+            }
             
             // Get involved nodes
             const involvedNodeIds = new Set();
@@ -988,7 +1071,8 @@
                     sequence_grouping: showSequenceGrouping,
                     reapr_analysis: showReapr,
                     confidence_threshold: confidenceThreshold,
-                    node_types: nodeTypeFilters
+                    node_types: nodeTypeFilters,
+                    combine_edges: combineEdges
                 }
             };
         }
@@ -1007,16 +1091,27 @@
             }));
             
             // Prepare edges for vis.js
-            const visEdges = data.edges.map((edge, index) => ({
-                id: `${edge.src}-${edge.dst}-${index}`,
-                from: edge.src,
-                to: edge.dst,
-                label: document.getElementById('show-edge-labels').checked ? edge.operation : '',
-                title: createEdgeTooltip(edge),
-                color: getEdgeColor(edge),
-                width: getEdgeWidth(edge),
-                arrows: 'to'
-            }));
+            const visEdges = data.edges.map((edge, index) => {
+                // Create label with count for combined edges
+                let label = '';
+                if (document.getElementById('show-edge-labels').checked) {
+                    label = edge.operation;
+                    if (edge.is_combined && edge.combined_count > 1) {
+                        label += ` (${edge.combined_count}x)`;
+                    }
+                }
+                
+                return {
+                    id: edge.id || `${edge.src}-${edge.dst}-${index}`,
+                    from: edge.src,
+                    to: edge.dst,
+                    label: label,
+                    title: createEdgeTooltip(edge),
+                    color: getEdgeColor(edge),
+                    width: getEdgeWidth(edge),
+                    arrows: 'to'
+                };
+            });
             
             const visData = {
                 nodes: new vis.DataSet(visNodes),
@@ -1116,21 +1211,82 @@
         }
         
         function getEdgeColor(edge) {
-            // TODO: Apply sequence group coloring
+            // Apply sequence group coloring if available and enabled
             if (document.getElementById('sequence-grouping').checked) {
-                // Check if edge is part of a sequence group
-                // Return appropriate color based on sequence pattern
+                if (edge.sequence_color) {
+                    return edge.sequence_color;
+                }
+                // Check if edge is part of sequence groups from currentData
+                if (currentData && currentData.sequence_groups) {
+                    for (const [groupId, group] of Object.entries(currentData.sequence_groups)) {
+                        // For combined edges, check if any original edge belongs to this group
+                        if (edge.is_combined) {
+                            const hasSequenceEdge = edge.original_edges.some(originalEdge => {
+                                return group.edges.some(([src, dst, key]) => 
+                                    src === originalEdge.src && 
+                                    dst === originalEdge.dst && 
+                                    key == originalEdge.key
+                                );
+                            });
+                            if (hasSequenceEdge) {
+                                return group.pattern_color;
+                            }
+                        } else {
+                            // Single edge, check directly
+                            const isInGroup = group.edges.some(([src, dst, key]) => 
+                                src === edge.src && 
+                                dst === edge.dst && 
+                                key == edge.key
+                            );
+                            if (isInGroup) {
+                                return group.pattern_color;
+                            }
+                        }
+                    }
+                }
             }
             
             return '#848484'; // Default gray
         }
         
+        /**
+         * Determines edge width based on combination status.
+         * Combined edges are rendered with thicker lines to indicate multiple operations.
+         * 
+         * @param {Object} edge - Edge object (may be combined or single)
+         * @returns {number} Width value for the edge (2-8 pixels)
+         */
         function getEdgeWidth(edge) {
+            if (edge.is_combined && edge.combined_count > 1) {
+                // Thicker lines for combined edges, with a maximum
+                return Math.min(2 + edge.combined_count, 8);
+            }
             return 2; // Default width
         }
         
+        /**
+         * Creates tooltip text for edges, handling both single and combined edges.
+         * For combined edges, shows detailed information including count, time ranges, and indices.
+         * 
+         * @param {Object} edge - Edge object (may be combined or single)
+         * @returns {string} HTML tooltip text with escaped newlines
+         */
         function createEdgeTooltip(edge) {
-            return `Operation: ${edge.operation}\\nEntry: ${edge.entry_index}\\nTimestamp: ${new Date(edge.timestamp * 1000).toLocaleString()}`;
+            if (edge.is_combined && edge.combined_count > 1) {
+                // Combined edge tooltip with detailed information
+                const timeRange = edge.timestamp_min !== edge.timestamp_max 
+                    ? `${new Date(edge.timestamp_min * 1000).toLocaleString()} - ${new Date(edge.timestamp_max * 1000).toLocaleString()}`
+                    : new Date(edge.timestamp_min * 1000).toLocaleString();
+                
+                return `Operation: ${edge.operation} (Combined)\\n` +
+                       `Count: ${edge.combined_count} operations\\n` +
+                       `Time Range: ${timeRange}\\n` +
+                       `Entry Indices: ${edge.entry_indices.join(', ')}\\n` +
+                       `Line IDs: ${edge.line_ids.filter(id => id).join(', ')}`;
+            } else {
+                // Single edge tooltip
+                return `Operation: ${edge.operation}\\nEntry: ${edge.entry_index}\\nTimestamp: ${new Date(edge.timestamp * 1000).toLocaleString()}`;
+            }
         }
         
         function applyEntryRange() {
@@ -1260,13 +1416,24 @@
                 content.appendChild(item);
             });
             
-            // Update stats
+            // Update stats with edge combination information
             if (filteredData) {
+                const combineEdges = filteredData.filters_applied.combine_edges;
+                let edgeStatsText = `Edges: ${filteredData.edges.length}`;
+                
+                if (combineEdges) {
+                    // Count total original edges when combined - shows the reduction in visual clutter
+                    const totalOriginalEdges = filteredData.edges.reduce((sum, edge) => {
+                        return sum + (edge.combined_count || 1);
+                    }, 0);
+                    edgeStatsText += ` (${totalOriginalEdges} original)`;
+                }
+                
                 stats.innerHTML = `
                     <strong>Current View:</strong><br>
                     Nodes: ${filteredData.nodes.length}<br>
-                    Edges: ${filteredData.edges.length}<br>
-                    Entry Range: ${filteredData.filters_applied.entry_range[0]}-${filteredData.filters_applied.entry_range[1]}
+                    ${edgeStatsText}<br>
+                    Entry Range: ${filteredData.filters_applied.entry_range[0]}-${filteredData.filters_applied.entry_range[1]}${combineEdges ? '<br><em>Edges combined by operation</em>' : ''}
                 `;
             }
         }
@@ -1310,6 +1477,7 @@
             }
             if (filters.sequence_grouping) activeFilters.push('Sequence');
             if (filters.reapr_analysis) activeFilters.push('REAPr');
+            if (filters.combine_edges) activeFilters.push('Combined');
             
             const filterText = activeFilters.length > 0 ? activeFilters.join(', ') : 'None';
             document.getElementById('filter-text').textContent = `Filters: ${filterText}`;
