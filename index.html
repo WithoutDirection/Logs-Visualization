@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Log Entry Visualization Tool</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header/Control Panel -->
+        <div class="header">
+            <select id="graph-selector">
+                <option value="">Select Event Graph...</option>
+            </select>
+            <button id="load-btn" disabled>Load Graph</button>
+            
+            <div class="range-controls">
+                <div class="window-nav-buttons">
+                    <button id="last-window-btn" class="window-nav-btn" title="Previous window">◀ Last</button>
+                    <button id="next-window-btn" class="window-nav-btn" title="Next window">Next ▶</button>
+                </div>
+                <label style="color: white; font-size: 13px;">
+                    From Entry: <input type="number" id="entry-start" min="1" value="1">
+                </label>
+                <label style="color: white; font-size: 13px;">
+                    To Entry: <input type="number" id="entry-end" min="1" value="100">
+                </label>
+                <button id="apply-range-btn">Apply Range</button>
+            </div>
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <h3>📊 Graph Statistics</h3>
+            <div class="stats-grid" id="stats-container">
+                <div class="stat-item">
+                    <span class="stat-label">Nodes:</span>
+                    <span class="stat-value" id="stat-nodes">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Edges:</span>
+                    <span class="stat-value" id="stat-edges">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Entries:</span>
+                    <span class="stat-value" id="stat-entries">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Time Range:</span>
+                    <span class="stat-value" id="stat-time">-</span>
+                </div>
+            </div>
+            
+            <h3>🎛️ Visualization Options</h3>
+            <div class="filter-section">
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="sequence-grouping" checked>
+                        Enable Sequence Grouping
+                    </label>
+                    <label>
+                        <input type="checkbox" id="reapr-analysis">
+                        Show REAPr Analysis
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-legend">
+                        Show Legend
+                    </label>
+                </div>
+            </div>
+            
+            <h3>📋 Entry Range Presets</h3>
+            <div class="preset-controls">
+                <button class="preset-btn" data-range="10">First 10</button>
+                <button class="preset-btn" data-range="25">First 25</button>
+                <button class="preset-btn" data-range="50">First 50</button>
+                <button class="preset-btn" data-range="100">First 100</button>
+                <button class="preset-btn" data-range="250">First 250</button>
+                <button class="preset-btn" data-range="500">First 500</button>
+                <button class="preset-btn" data-range="all">All Entries</button>
+            </div>
+            
+            <h3>🔍 Node Type Filters</h3>
+            <div class="filter-section" id="node-filters">
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="show-process" checked>
+                        Process Nodes
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-file" checked>
+                        File Nodes
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-registry" checked>
+                        Registry Nodes
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-network" checked>
+                        Network Nodes
+                    </label>
+                </div>
+            </div>
+            
+            <h3>🎯 Pattern Settings</h3>
+            <div class="filter-section" id="pattern-filters">
+                <div class="slider-container">
+                    <label>Confidence Threshold: <span id="confidence-value">60%</span></label>
+                    <input type="range" id="confidence-slider" class="slider" min="0" max="100" value="60">
+                </div>
+            </div>
+            
+            <h3>⚙️ Layout Options</h3>
+            <div class="filter-section">
+                <div class="filter-group">
+                    <label>
+                        <input type="checkbox" id="enable-physics" checked>
+                        Enable Physics
+                    </label>
+                    <label>
+                        <input type="checkbox" id="show-edge-labels" checked>
+                        Show Edge Labels
+                    </label>
+                    <label>
+                        <input type="checkbox" id="combine-edges" title="Combine multiple edges with the same operation between the same source and destination nodes. Shows count and merged metadata.">
+                        Combine Same Operations
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main visualization area -->
+        <div class="main">
+            <div id="graph-container">
+                <div class="no-graph">
+                    <h2>🔗 Unified Log Entry Visualization</h2>
+                    <p>Select an event graph from the dropdown to begin visualization</p>
+                    <p style="margin-top: 10px; font-size: 14px; color: #888;">
+                        Features: Entry-based navigation • Sequence pattern detection • REAPr analysis • Real-time filtering
+                    </p>
+                </div>
+            </div>
+            <div class="loading" id="loading" style="display: none;">
+                <div class="loading-spinner"></div>
+                <div>Loading graph data...</div>
+            </div>
+        </div>
+        
+        <!-- Status bar -->
+        <div class="status">
+            <div class="status-left">
+                <span id="status-text">Ready - Select a graph to begin</span>
+            </div>
+            <div class="status-right">
+                <span id="performance-text">Performance: -</span>
+                <span id="memory-text">Memory: -</span>
+                <span id="filter-text">Filters: None</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Legend -->
+    <div class="legend" id="legend">
+        <h4>Sequence Patterns</h4>
+        <div id="legend-content"></div>
+        <div class="legend-stats" id="legend-stats"></div>
+    </div>
+    
+    <!-- Notification container -->
+    <div id="notification" class="notification"></div>
+    
+    <script src="js/script.js"></script>
+</body>
+</html>

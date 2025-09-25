@@ -2,7 +2,24 @@
 """
 Simple HTTP Server for Unified Log Visualization Tool
 
-This server serves the HTML visualization tool and JSON data files.
+This server serves the HTML vis    # Check if required files exist
+    index_file = os.path.join(args.directory, 'index.html')
+    css_dir = os.path.join(args.directory, 'css')
+    js_dir = os.path.join(args.directory, 'js')
+    data_dir = os.path.join(args.directory, 'unified_viz_data')
+    
+    if not os.path.exists(index_file):
+        print(f"❌ Main HTML file not found: {index_file}")
+        print("   Make sure index.html exists in the directory")
+        sys.exit(1)
+    
+    if not os.path.exists(css_dir):
+        print(f"⚠️  CSS directory not found: {css_dir}")
+        print("   CSS files should be in the css/ directory")
+    
+    if not os.path.exists(js_dir):
+        print(f"⚠️  JavaScript directory not found: {js_dir}")
+        print("   JavaScript files should be in the js/ directory")on tool and JSON data files.
 It includes CORS headers to allow local file access.
 """
 
@@ -31,7 +48,19 @@ class VisualizationHTTPHandler(http.server.SimpleHTTPRequestHandler):
         
         # Serve the main HTML file at root
         if path == '/' or path == '/index.html':
-            self.path = '/unified_log_visualization.html'
+            self.path = '/index.html'
+        
+
+        
+        # Serve CSS files from css directory
+        elif path.startswith('/css/'):
+            # The path is already correct, just serve it
+            pass
+        
+        # Serve JavaScript files from js directory
+        elif path.startswith('/js/'):
+            # The path is already correct, just serve it
+            pass
         
         # Serve JSON data files from unified_viz_data directory
         elif path.startswith('/unified_viz_data/'):
@@ -59,17 +88,19 @@ def start_server(port=8000, directory='.'):
 ? Unified Log Visualization Server Starting
 {'='*50}
 
-? Serving directory: {os.path.abspath(directory)}
-? Server URL: http://localhost:{port}
-? Visualization: http://localhost:{port}/
-? Data directory: http://localhost:{port}/unified_viz_data/
+📁 Serving directory: {os.path.abspath(directory)}
+🌐 Server URL: http://localhost:{port}
+🎯 Visualization: http://localhost:{port}/
+📊 Data directory: http://localhost:{port}/unified_viz_data/
 
-? Server Configuration:
+⚙️ Server Configuration:
    - CORS enabled for local development
+   - CSS files served from ./css/
+   - JavaScript files served from ./js/
    - JSON data served from ./unified_viz_data/
-   - Main visualization at root URL
+   - Main visualization at root URL (index.html)
 
-? Quick Start:
+🚀 Quick Start:
    1. Run data preparation: python unified_viz_data_preparation.py
    2. Open: http://localhost:{port}
    3. Select a graph from dropdown
@@ -101,12 +132,12 @@ def main():
     args = parser.parse_args()
     
     # Check if required files exist
-    html_file = os.path.join(args.directory, 'unified_log_visualization.html')
+    index_file = os.path.join(args.directory, 'index.html')
     data_dir = os.path.join(args.directory, 'unified_viz_data')
     
-    if not os.path.exists(html_file):
-        print(f"? HTML file not found: {html_file}")
-        print("   Make sure unified_log_visualization.html exists in the directory")
+    if not os.path.exists(index_file):
+        print(f"❌ Main HTML file not found: {index_file}")
+        print("   Make sure index.html exists in the directory")
         sys.exit(1)
     
     if not os.path.exists(data_dir):
