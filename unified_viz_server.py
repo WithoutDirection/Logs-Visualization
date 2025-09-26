@@ -42,33 +42,36 @@ class VisualizationHTTPHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
     
     def do_GET(self):
-        """Handle GET requests"""
-        parsed_path = urlparse(self.path)
-        path = parsed_path.path
-        
-        # Serve the main HTML file at root
-        if path == '/' or path == '/index.html':
-            self.path = '/index.html'
-        
+        """Handle GET requests with improved error handling"""
+        try:
+            parsed_path = urlparse(self.path)
+            path = parsed_path.path
 
-        
-        # Serve CSS files from css directory
-        elif path.startswith('/css/'):
-            # The path is already correct, just serve it
-            pass
-        
-        # Serve JavaScript files from js directory
-        elif path.startswith('/js/'):
-            # The path is already correct, just serve it
-            pass
-        
-        # Serve JSON data files from unified_viz_data directory
-        elif path.startswith('/unified_viz_data/'):
-            # The path is already correct, just serve it
-            pass
-        
-        # Serve other static files as normal
-        return super().do_GET()
+            # Serve the main HTML file at root
+            if path == '/' or path == '/index.html':
+                self.path = '/index.html'
+
+            # Serve CSS files from css directory
+            elif path.startswith('/css/'):
+                # The path is already correct, just serve it
+                pass
+
+            # Serve JavaScript files from js directory
+            elif path.startswith('/js/'):
+                # The path is already correct, just serve it
+                pass
+
+            # Serve JSON data files from unified_viz_data directory
+            elif path.startswith('/unified_viz_data/'):
+                # The path is already correct, just serve it
+                pass
+
+            # Serve other static files as normal
+            return super().do_GET()
+
+        except Exception as e:
+            self.send_error(500, f"Internal server error: {str(e)}")
+            print(f"Error handling request for {self.path}: {e}")
     
     def do_OPTIONS(self):
         """Handle OPTIONS requests for CORS"""

@@ -3,205 +3,296 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unified Log Entry Visualization Tool</title>
+    <meta name="description" content="Unified Log Entry Visualization Tool for analyzing security event graphs">
+    <title>Unifie        </aside>
+        
+        <!-- Status bar -->
+        <footer class="status" role="contentinfo">
+            <div class="status-left">
+                <span id="status-text" role="status" aria-live="polite">Ready - Select a graph to begin</span>
+            </div>
+            <div class="status-right">
+                <span id="performance-text" aria-label="Performance metrics">Performance: -</span>
+                <span id="memory-text" aria-label="Memory usage">Memory: -</span>
+                <span id="filter-text" aria-label="Active filters">Filters: None</span>
+            </div>
+        </footer>
+    </div>sualization Tool</title>
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
     <div class="container">
         <!-- Header/Control Panel -->
-        <div class="header">
-            <select id="graph-selector">
-                <option value="">Select Event Graph...</option>
-            </select>
-            <button id="load-btn" disabled>Load Graph</button>
-            
-            <div class="range-controls">
-                <div class="window-nav-buttons">
-                    <button id="last-window-btn" class="window-nav-btn" title="Previous window">◀ Last</button>
-                    <button id="next-window-btn" class="window-nav-btn" title="Next window">Next ▶</button>
-                </div>
-                <label style="color: white; font-size: 13px;">
-                    From Entry: <input type="number" id="entry-start" min="1" value="1">
-                </label>
-                <label style="color: white; font-size: 13px;">
-                    To Entry: <input type="number" id="entry-end" min="1" value="100">
-                </label>
-                <button id="apply-range-btn">Apply Range</button>
+        <header class="header" role="banner">
+            <div class="graph-controls">
+                <label for="graph-selector" class="sr-only">Select Event Graph</label>
+                <select id="graph-selector" aria-describedby="graph-selector-help">
+                    <option value="">Select Event Graph...</option>
+                </select>
+                <span id="graph-selector-help" class="sr-only">Choose a graph file to visualize</span>
+                <button id="load-btn" disabled aria-describedby="load-btn-help">Load Graph</button>
+                <span id="load-btn-help" class="sr-only">Load the selected graph for visualization</span>
             </div>
-        </div>
+
+            <nav class="range-controls" aria-label="Entry Range Navigation">
+                <div class="window-nav-buttons">
+                    <button id="last-window-btn" class="window-nav-btn" title="Previous window" aria-label="Load previous entry window">◀ Last</button>
+                    <button id="next-window-btn" class="window-nav-btn" title="Next window" aria-label="Load next entry window">Next ▶</button>
+                </div>
+                <div class="range-inputs">
+                    <label for="entry-start">From Entry:</label>
+                    <input type="number" id="entry-start" min="1" value="1" aria-describedby="entry-range-help">
+                    <label for="entry-end">To Entry:</label>
+                    <input type="number" id="entry-end" min="1" value="100" aria-describedby="entry-range-help">
+                    <span id="entry-range-help" class="sr-only">Specify the range of log entries to display in the graph</span>
+                    <button id="apply-range-btn" aria-describedby="apply-range-help">Apply Range</button>
+                    <span id="apply-range-help" class="sr-only">Apply the specified entry range filter</span>
+                </div>
+            </nav>
+
+            <div class="search-controls">
+                <label for="search-input" class="sr-only">Search nodes and edges</label>
+                <input type="text" id="search-input" placeholder="Search nodes/edges..." aria-describedby="search-help">
+                <span id="search-help" class="sr-only">Search for specific nodes or edges in the graph</span>
+                <button id="search-btn" aria-label="Perform search">🔍</button>
+                <button id="clear-search-btn" aria-label="Clear search results">✕</button>
+            </div>
+        </header>
         
         <!-- Sidebar -->
-        <div class="sidebar">
-            <h3>📊 Graph Statistics</h3>
-            <div class="stats-grid" id="stats-container">
-                <div class="stat-item">
-                    <span class="stat-label">Nodes:</span>
-                    <span class="stat-value" id="stat-nodes">-</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Edges:</span>
-                    <span class="stat-value" id="stat-edges">-</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Entries:</span>
-                    <span class="stat-value" id="stat-entries">-</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Time Range:</span>
-                    <span class="stat-value" id="stat-time">-</span>
-                </div>
-            </div>
-            
-            <h3>🎛️ Visualization Options</h3>
-            <div class="filter-section">
-                <div class="filter-group">
-                    <label>
-                        <input type="checkbox" id="sequence-grouping" checked>
-                        Enable Sequence Grouping
-                    </label>
-                    <label>
-                        <input type="checkbox" id="reapr-analysis">
-                        Show REAPr Analysis
-                    </label>
-                    <label>
-                        <input type="checkbox" id="show-legend">
-                        Show Legend
-                    </label>
-                    <label>
-                        <input type="checkbox" id="optimize-registry-paths" checked title="Automatically shorten long registry paths by replacing common prefixes with '~'. Select nodes to see full paths.">
-                        Optimize Registry Paths
-                    </label>
-                </div>
-            </div>
-            
-            <h3>📋 Entry Range Presets</h3>
-            <div class="preset-controls">
-                <button class="preset-btn" data-range="10">First 10</button>
-                <button class="preset-btn" data-range="25">First 25</button>
-                <button class="preset-btn" data-range="50">First 50</button>
-                <button class="preset-btn" data-range="100">First 100</button>
-                <button class="preset-btn" data-range="250">First 250</button>
-                <button class="preset-btn" data-range="500">First 500</button>
-                <button class="preset-btn" data-range="all">All Entries</button>
-            </div>
-            
-            <h3>🔍 Node Type Filters</h3>
-            <div class="filter-section" id="node-filters">
-                <div class="filter-group">
-                    <label>
-                        <input type="checkbox" id="show-process" checked>
-                        Process Nodes
-                    </label>
-                    <label>
-                        <input type="checkbox" id="show-file" checked>
-                        File Nodes
-                    </label>
-                    <label>
-                        <input type="checkbox" id="show-registry" checked>
-                        Registry Nodes
-                    </label>
-                    <label>
-                        <input type="checkbox" id="show-network" checked>
-                        Network Nodes
-                    </label>
-                </div>
-            </div>
-            
-            <h3>🎯 Pattern Settings</h3>
-            <div class="filter-section" id="pattern-filters">
-                <div class="slider-container">
-                    <label>Confidence Threshold: <span id="confidence-value">60%</span></label>
-                    <input type="range" id="confidence-slider" class="slider" min="0" max="100" value="60">
-                </div>
-            </div>
-            
-            <h3>⚙️ Layout Options</h3>
-            <div class="filter-section">
-                <div class="filter-group">
-                    <label>
-                        <input type="checkbox" id="enable-physics" checked>
-                        Enable Physics
-                    </label>
-                    <label>
-                        <input type="checkbox" id="show-edge-labels" checked>
-                        Show Edge Labels
-                    </label>
-                    <label>
-                        <input type="checkbox" id="combine-edges" title="Combine multiple edges with the same operation between the same source and destination nodes. Shows count and merged metadata.">
-                        Combine Same Operations
-                    </label>
-                </div>
-            </div>
-            
-            <h3>🎮 Interaction Guide</h3>
-            <div class="filter-section">
-                <div style="font-size: 12px; color: #666; line-height: 1.4;">
-                    <div style="margin-bottom: 8px;"><strong>Mouse:</strong></div>
-                    <div>• Click nodes/edges to see details on right</div>
-                    <div>• Click empty space to hide details</div>
-                    <div>• Drag nodes to reposition (stays fixed)</div>
-                    <div>• Right-click for context menu & unfix options</div>
-                    <div>• Double-click to focus on node</div>
-                    <div>• Scroll to zoom in/out</div>
-                    <div style="margin: 8px 0;"><strong>Keyboard:</strong></div>
-                    <div>• <code>Ctrl+F</code> - Fit all nodes</div>
-                    <div>• <code>Space</code> - Toggle physics</div>
-                    <div>• <code>Escape</code> - Close details panel</div>
-                    <div>• <code>Ctrl+R</code> - Redraw graph</div>
-                    <div style="margin: 8px 0;"><strong>Node Positioning:</strong></div>
-                    <div style="font-size: 11px; color: #888;">
-                        • Dragged nodes stay in place automatically
+        <aside class="sidebar" role="complementary" aria-label="Graph Statistics and Controls">
+            <section class="stats-section">
+                <h2>📊 Graph Statistics</h2>
+                <div class="stats-grid" id="stats-container" role="region" aria-label="Graph Statistics">
+                    <div class="stat-item">
+                        <span class="stat-label">Nodes:</span>
+                        <span class="stat-value" id="stat-nodes" aria-label="Total number of nodes">-</span>
                     </div>
-                    <div style="font-size: 11px; color: #888;">
-                        • Right-click → "Unfix Node" to allow movement
+                    <div class="stat-item">
+                        <span class="stat-label">Edges:</span>
+                        <span class="stat-value" id="stat-edges" aria-label="Total number of edges">-</span>
                     </div>
-                    <div style="font-size: 11px; color: #888;">
-                        • Right-click → "Unfix All Nodes" to reset all
+                    <div class="stat-item">
+                        <span class="stat-label">Entries:</span>
+                        <span class="stat-value" id="stat-entries" aria-label="Total number of log entries">-</span>
                     </div>
-                    <div style="margin: 8px 0;"><strong>Registry Paths:</strong></div>
-                    <div style="font-size: 11px; color: #888;">
-                        • Long registry paths are automatically shortened
-                    </div>
-                    <div style="font-size: 11px; color: #888;">
-                        • Select node to see full path in details
-                    </div>
-                    <div style="font-size: 11px; color: #888;">
-                        • Common prefixes shown as "~"
+                    <div class="stat-item">
+                        <span class="stat-label">Time Range:</span>
+                        <span class="stat-value" id="stat-time" aria-label="Time range of displayed data">-</span>
                     </div>
                 </div>
-            </div>
-        </div>
+            </section>
+
+            <section class="visualization-options">
+                <h2>🎛️ Visualization Options</h2>
+                <fieldset class="filter-section">
+                    <legend class="sr-only">Visualization Options</legend>
+                    <div class="filter-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="sequence-grouping" checked aria-describedby="sequence-grouping-help">
+                            Enable Sequence Grouping
+                        </label>
+                        <span id="sequence-grouping-help" class="sr-only">Group related operations into sequence patterns for better analysis</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="reapr-analysis" aria-describedby="reapr-analysis-help">
+                            Show REAPr Analysis
+                        </label>
+                        <span id="reapr-analysis-help" class="sr-only">Display REAPr (Registry Event Analysis and Pattern Recognition) analysis results</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-legend" aria-describedby="show-legend-help">
+                            Show Legend
+                        </label>
+                        <span id="show-legend-help" class="sr-only">Display the legend showing sequence pattern colors and descriptions</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="optimize-registry-paths" checked aria-describedby="registry-paths-help" title="Automatically shorten long registry paths by replacing common prefixes with '~'. Select nodes to see full paths.">
+                            Optimize Registry Paths
+                        </label>
+                        <span id="registry-paths-help" class="sr-only">Shorten long registry paths for better readability</span>
+                    </div>
+                </fieldset>
+            </section>
+            
+            <section class="preset-controls-section">
+                <h2>📋 Entry Range Presets</h2>
+                <div class="preset-controls" role="group" aria-label="Entry Range Presets">
+                    <button class="preset-btn" data-range="10" aria-describedby="preset-10-help">First 10</button>
+                    <span id="preset-10-help" class="sr-only">Load the first 10 log entries</span>
+                    <button class="preset-btn" data-range="25" aria-describedby="preset-25-help">First 25</button>
+                    <span id="preset-25-help" class="sr-only">Load the first 25 log entries</span>
+                    <button class="preset-btn" data-range="50" aria-describedby="preset-50-help">First 50</button>
+                    <span id="preset-50-help" class="sr-only">Load the first 50 log entries</span>
+                    <button class="preset-btn" data-range="100" aria-describedby="preset-100-help">First 100</button>
+                    <span id="preset-100-help" class="sr-only">Load the first 100 log entries</span>
+                    <button class="preset-btn" data-range="250" aria-describedby="preset-250-help">First 250</button>
+                    <span id="preset-250-help" class="sr-only">Load the first 250 log entries</span>
+                    <button class="preset-btn" data-range="500" aria-describedby="preset-500-help">First 500</button>
+                    <span id="preset-500-help" class="sr-only">Load the first 500 log entries</span>
+                    <button class="preset-btn" data-range="all" aria-describedby="preset-all-help">All Entries</button>
+                    <span id="preset-all-help" class="sr-only">Load all available log entries</span>
+                </div>
+            </section>
+
+            <section class="node-filters-section">
+                <h2>🔍 Node Type Filters</h2>
+                <fieldset class="filter-section" id="node-filters">
+                    <legend class="sr-only">Node Type Filters</legend>
+                    <div class="filter-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-process" checked aria-describedby="show-process-help">
+                            Process Nodes
+                        </label>
+                        <span id="show-process-help" class="sr-only">Show or hide process-related nodes in the graph</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-file" checked aria-describedby="show-file-help">
+                            File Nodes
+                        </label>
+                        <span id="show-file-help" class="sr-only">Show or hide file-related nodes in the graph</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-registry" checked aria-describedby="show-registry-help">
+                            Registry Nodes
+                        </label>
+                        <span id="show-registry-help" class="sr-only">Show or hide registry-related nodes in the graph</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-network" checked aria-describedby="show-network-help">
+                            Network Nodes
+                        </label>
+                        <span id="show-network-help" class="sr-only">Show or hide network-related nodes in the graph</span>
+                    </div>
+                </fieldset>
+            </section>
+            
+            <section class="pattern-settings-section">
+                <h2>🎯 Pattern Settings</h2>
+                <fieldset class="filter-section" id="pattern-filters">
+                    <legend class="sr-only">Pattern Settings</legend>
+                    <div class="slider-container">
+                        <label for="confidence-slider">Confidence Threshold: <span id="confidence-value">60%</span></label>
+                        <input type="range" id="confidence-slider" class="slider" min="0" max="100" value="60" aria-describedby="confidence-slider-help">
+                        <span id="confidence-slider-help" class="sr-only">Adjust the minimum confidence level for pattern detection</span>
+                    </div>
+                </fieldset>
+            </section>
+
+            <section class="layout-options-section">
+                <h2>⚙️ Layout Options</h2>
+                <fieldset class="filter-section">
+                    <legend class="sr-only">Layout Options</legend>
+                    <div class="filter-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="enable-physics" checked aria-describedby="enable-physics-help">
+                            Enable Physics
+                        </label>
+                        <span id="enable-physics-help" class="sr-only">Enable or disable automatic node positioning physics</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-edge-labels" checked aria-describedby="show-edge-labels-help">
+                            Show Edge Labels
+                        </label>
+                        <span id="show-edge-labels-help" class="sr-only">Show or hide operation labels on graph edges</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="combine-edges" aria-describedby="combine-edges-help" title="Combine multiple edges with the same operation between the same source and destination nodes. Shows count and merged metadata.">
+                            Combine Same Operations
+                        </label>
+                        <span id="combine-edges-help" class="sr-only">Combine multiple identical operations into single edges with counts</span>
+                    </div>
+                </fieldset>
+            </section>
+            
+            <section class="interaction-guide-section">
+                <h2>🎮 Interaction Guide</h2>
+                <div class="filter-section" role="region" aria-label="Interaction Guide">
+                    <div class="interaction-content">
+                        <div class="interaction-section">
+                            <h3>Mouse:</h3>
+                            <ul>
+                                <li>Click nodes/edges to see details on right</li>
+                                <li>Click empty space to hide details</li>
+                                <li>Drag nodes to reposition (stays fixed)</li>
+                                <li>Right-click for context menu & unfix options</li>
+                                <li>Double-click to focus on node</li>
+                                <li>Scroll to zoom in/out</li>
+                            </ul>
+                        </div>
+                        <div class="interaction-section">
+                            <h3>Keyboard:</h3>
+                            <ul>
+                                <li><kbd>Ctrl+F</kbd> - Fit all nodes</li>
+                                <li><kbd>Space</kbd> - Toggle physics</li>
+                                <li><kbd>Escape</kbd> - Close details panel</li>
+                                <li><kbd>Ctrl+R</kbd> - Redraw graph</li>
+                            </ul>
+                        </div>
+                        <div class="interaction-section">
+                            <h3>Node Positioning:</h3>
+                            <ul class="small-text">
+                                <li>Dragged nodes stay in place automatically</li>
+                                <li>Right-click → "Unfix Node" to allow movement</li>
+                                <li>Right-click → "Unfix All Nodes" to reset all</li>
+                            </ul>
+                        </div>
+                        <div class="interaction-section">
+                            <h3>Registry Paths:</h3>
+                            <ul class="small-text">
+                                <li>Long registry paths are automatically shortened</li>
+                                <li>Select node to see full path in details</li>
+                                <li>Common prefixes shown as "~"</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </aside>
         
         <!-- Main visualization area -->
-        <div class="main">
-            <div id="graph-container">
-                <div class="no-graph">
-                    <h2>🔗 Unified Log Entry Visualization</h2>
+        <main class="main" id="main-content" role="main" aria-label="Graph Visualization Area">
+            <div id="graph-container" role="region" aria-label="Interactive Graph Visualization">
+                <div class="no-graph" role="status" aria-live="polite">
+                    <h1>🔗 Unified Log Entry Visualization</h1>
                     <p>Select an event graph from the dropdown to begin visualization</p>
-                    <p style="margin-top: 10px; font-size: 14px; color: #888;">
-                        Features: Entry-based navigation • Sequence pattern detection • REAPr analysis • Real-time filtering
-                    </p>
+                    <p>Features: Entry-based navigation • Sequence pattern detection • REAPr analysis • Real-time filtering</p>
                 </div>
             </div>
-            <div class="loading" id="loading" style="display: none;">
-                <div class="loading-spinner"></div>
+            <div class="loading" id="loading" style="display: none;" role="status" aria-live="assertive">
+                <div class="loading-spinner" aria-hidden="true"></div>
                 <div>Loading graph data...</div>
             </div>
-        </div>
+        </main>
 
         <!-- Node Details Panel -->
-        <div class="details-panel" id="details-panel">
+        <aside class="details-panel" id="details-panel" role="complementary" aria-label="Node and Edge Details">
             <div class="details-header">
-                <h3>📄 Node Details</h3>
-                <button class="close-btn" id="close-details-btn">×</button>
+                <div class="details-header-main">
+                    <span class="details-icon" id="details-icon" aria-hidden="true">📄</span>
+                    <div class="details-header-text">
+                        <h2 id="details-title">Node &amp; Edge Details</h2>
+                        <p id="details-subtitle">Select a node or edge in the graph to explore its context.</p>
+                    </div>
+                </div>
+                <button class="close-btn" id="close-details-btn" aria-label="Close details panel" aria-describedby="close-details-help">×</button>
+                <span id="close-details-help" class="sr-only">Close the details panel</span>
             </div>
-            <div class="details-content" id="details-content">
-                <div class="no-selection">
-                    <p>Click on a node to view its details</p>
+            <div class="details-content" id="details-content" role="region" aria-label="Details Content">
+                <div class="details-placeholder">
+                    <div class="placeholder-icon" aria-hidden="true">👈</div>
+                    <h3>Waiting for a selection</h3>
+                    <p>Interact with the graph to surface rich metadata, timelines, and quick actions here.</p>
+                    <ul class="placeholder-hints">
+                        <li>Click a node to inspect its properties and timestamps.</li>
+                        <li>Click an edge to review the associated operation history.</li>
+                        <li>Use the action buttons to focus or unfix nodes instantly.</li>
+                    </ul>
                 </div>
             </div>
-        </div>
+        </aside>
         
         <!-- Status bar -->
         <div class="status">
@@ -214,18 +305,18 @@
                 <span id="filter-text">Filters: None</span>
             </div>
         </div>
-    </div>
-    
+    </header>
+
     <!-- Legend -->
-    <div class="legend" id="legend">
-        <h4>Sequence Patterns</h4>
+    <div class="legend" id="legend" role="region" aria-label="Sequence Patterns Legend">
+        <h3>Sequence Patterns</h3>
         <div id="legend-content"></div>
         <div class="legend-stats" id="legend-stats"></div>
     </div>
-    
+
     <!-- Notification container -->
-    <div id="notification" class="notification"></div>
-    
+    <div id="notification" class="notification" role="status" aria-live="polite" aria-atomic="true"></div>
+
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

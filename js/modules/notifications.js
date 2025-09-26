@@ -123,14 +123,25 @@ class NotificationSystem {
 
     /**
      * Update memory usage display
+     * @param {number} estimatedMemory - Optional estimated memory usage in MB
      */
-    updateMemoryUsage() {
-        if (performance.memory) {
+    updateMemoryUsage(estimatedMemory = null) {
+        let memoryText = '';
+
+        if (estimatedMemory !== null) {
+            // Use provided estimated memory
+            memoryText = `${estimatedMemory}MB`;
+        } else if (performance.memory) {
+            // Fall back to browser memory usage
             const used = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
-            const memoryElement = document.getElementById('memory-text');
-            if (memoryElement) {
-                memoryElement.textContent = `Memory: ${used}MB`;
-            }
+            memoryText = `${used}MB`;
+        } else {
+            memoryText = '-';
+        }
+
+        const memoryElement = document.getElementById('memory-text');
+        if (memoryElement) {
+            memoryElement.textContent = `Memory: ${memoryText}`;
         }
     }
 
