@@ -9,12 +9,14 @@ import notificationSystem from './modules/notifications.js';
 import GraphLoader from './modules/graph-loader.js';
 import DataFilters from './modules/filters.js';
 import Visualization from './modules/visualization.js';
+import Search from './modules/search.js';
 
 class LogVisualizationApp {
     constructor() {
         this.graphLoader = new GraphLoader();
         this.dataFilters = new DataFilters();
         this.visualization = new Visualization();
+        this.search = new Search(this.visualization);
         this.filteredData = null;
         
         this.init();
@@ -29,6 +31,7 @@ class LogVisualizationApp {
             
             await this.loadMetadata();
             this.initializeUI();
+            this.search.init(); // Initialize search functionality
             this.setupEventListeners();
             this.updateWindowNavigationButtons();
             
@@ -474,6 +477,9 @@ class LogVisualizationApp {
         
         // Apply filters to create filtered dataset
         this.filteredData = this.dataFilters.applyFilters(currentData);
+        
+        // Build search index for the filtered data
+        this.search.buildSearchIndex(this.filteredData);
         
         // Create vis.js network
         this.visualization.createNetworkVisualization(this.filteredData);
