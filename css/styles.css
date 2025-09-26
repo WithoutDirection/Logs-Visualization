@@ -12,14 +12,20 @@ body {
 }
 
 .container {
+    --details-width: 0px;
     display: grid;
     grid-template-areas: 
-        "header header"
-        "sidebar main"
-        "status status";
-    grid-template-columns: 320px 1fr;
+        "header header header"
+        "sidebar main details"
+        "status status status";
+    grid-template-columns: 320px 1fr var(--details-width);
     grid-template-rows: 70px 1fr 35px;
     height: 100vh;
+    transition: grid-template-columns 0.3s ease-in-out;
+}
+
+.container.details-open {
+    --details-width: 350px;
 }
 
 /* Header/Control Panel */
@@ -253,6 +259,104 @@ body {
     100% { transform: rotate(360deg); }
 }
 
+/* Details Panel */
+.details-panel {
+    grid-area: details;
+    background: white;
+    border-left: 2px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: -3px 0 10px rgba(0,0,0,0.1);
+    z-index: 50;
+}
+
+.details-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 15px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.details-header h3 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background-color 0.2s ease;
+}
+
+.close-btn:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.details-content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.no-selection {
+    text-align: center;
+    color: #666;
+    margin-top: 50px;
+}
+
+.details-content .detail-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+}
+
+.details-content .detail-label {
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 5px;
+}
+
+.details-content .detail-value {
+    color: #212529;
+    word-break: break-all;
+}
+
+.details-content .registry-optimization {
+    margin-top: 15px;
+    padding: 12px;
+    background: #e7f3ff;
+    border-radius: 6px;
+    border-left: 4px solid #007bff;
+    font-size: 12px;
+}
+
+.details-content .registry-optimization.disabled {
+    background: #fff3cd;
+    border-left-color: #ffc107;
+    color: #856404;
+}
+
 .no-graph {
     position: absolute;
     top: 50%;
@@ -465,4 +569,374 @@ input:checked + .toggle-slider:before {
 .notification.warning {
     background: #ffc107;
     color: #212529;
+}
+
+/* Enhanced Node and Edge Styles for Better Drag Interaction */
+
+/* Node visual enhancements */
+.vis-network .vis-network-canvas {
+    cursor: default;
+}
+
+/* Node hover effects */
+.vis-network .vis-network-canvas:hover {
+    cursor: grab;
+}
+
+/* Custom cursor for dragging */
+.vis-network.vis-dragging {
+    cursor: grabbing !important;
+}
+
+.vis-network.vis-dragging * {
+    cursor: grabbing !important;
+}
+
+/* Enhanced tooltips */
+.vis-tooltip {
+    background: rgba(0, 0, 0, 0.9) !important;
+    color: white !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    font-family: 'Segoe UI', sans-serif !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    max-width: 300px !important;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    z-index: 10000 !important;
+}
+
+/* Node selection and hover animations */
+.vis-network .vis-network-canvas .vis-node.vis-hover {
+    transform: scale(1.1);
+    transition: all 0.2s ease-in-out;
+}
+
+.vis-network .vis-network-canvas .vis-node.vis-selected {
+    transform: scale(1.15);
+    box-shadow: 0 0 15px rgba(102, 126, 234, 0.8);
+    transition: all 0.3s ease-in-out;
+}
+
+/* Edge highlighting on node hover */
+.vis-network .vis-network-canvas .vis-edge.vis-hover {
+    stroke-width: 4px !important;
+    transition: stroke-width 0.2s ease-in-out;
+}
+
+.vis-network .vis-network-canvas .vis-edge.vis-selected {
+    stroke-width: 5px !important;
+    stroke: #667eea !important;
+    transition: all 0.3s ease-in-out;
+}
+
+/* Node drag feedback */
+.vis-network .vis-network-canvas .vis-node.vis-drag {
+    opacity: 0.8;
+    transform: scale(1.2);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+    transition: none;
+}
+
+/* Context menu styling */
+.vis-network-context-menu {
+    background: white !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15) !important;
+    padding: 8px 0 !important;
+    min-width: 150px !important;
+}
+
+.vis-network-context-menu-item {
+    padding: 10px 16px !important;
+    font-family: 'Segoe UI', sans-serif !important;
+    font-size: 14px !important;
+    color: #333 !important;
+    transition: background-color 0.2s ease !important;
+}
+
+.vis-network-context-menu-item:hover {
+    background: #f8f9fa !important;
+    color: #667eea !important;
+}
+
+/* Loading overlay improvements */
+.graph-loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(2px);
+}
+
+.graph-loading-content {
+    text-align: center;
+    padding: 30px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e0e0e0;
+}
+
+/* Enhanced node labels */
+.vis-network .vis-network-canvas .vis-label {
+    font-family: 'Segoe UI', sans-serif !important;
+    font-weight: 500 !important;
+    text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Interactive feedback for buttons */
+.header button:active {
+    transform: translateY(1px);
+}
+
+.preset-btn:active {
+    transform: translateY(1px);
+}
+
+.window-nav-btn:active {
+    transform: translateY(1px);
+}
+
+/* Smooth transitions for all interactive elements */
+* {
+    transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+
+/* Focus indicators for accessibility */
+button:focus,
+input:focus,
+select:focus {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+}
+
+/* Additional graph interaction improvements */
+#graph-container {
+    position: relative;
+    cursor: default;
+    user-select: none;
+}
+
+/* Graph interaction states */
+#graph-container.dragging {
+    cursor: grabbing !important;
+}
+
+#graph-container.hovering-node {
+    cursor: grab !important;
+}
+
+/* Improved notification positioning for graph interactions */
+.notification.graph-interaction {
+    position: fixed;
+    bottom: 60px;
+    right: 20px;
+    top: auto;
+    padding: 8px 12px;
+    font-size: 12px;
+    min-width: auto;
+    max-width: 250px;
+}
+
+/* Node interaction feedback overlay */
+.node-interaction-hint {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-family: 'Segoe UI', sans-serif;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.node-interaction-hint.show {
+    opacity: 1;
+}
+
+/* Enhanced scroll behavior for sidebar */
+.sidebar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* Graph container loading state */
+#graph-container.loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+/* Improved button hover effects with transform */
+.header button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.preset-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* Node context menu animation */
+#node-context-menu {
+    animation: contextMenuSlideIn 0.2s ease-out;
+}
+
+@keyframes contextMenuSlideIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9) translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Node info tooltip animation */
+#node-info-tooltip {
+    animation: tooltipFadeIn 0.3s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* Responsive graph interaction */
+@media (max-width: 768px) {
+    .node-interaction-hint {
+        bottom: 10px;
+        font-size: 11px;
+        padding: 6px 12px;
+    }
+    
+    #node-context-menu {
+        min-width: 150px;
+        font-size: 13px;
+    }
+    
+    #node-info-tooltip {
+        max-width: 90vw;
+        padding: 16px 20px;
+        font-size: 13px;
+    }
+}
+
+/* Interaction guide styling */
+.filter-section code {
+    background: #f8f9fa;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #667eea;
+    border: 1px solid #e9ecef;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+    .container.details-open {
+        --details-width: 300px;
+    }
+    
+    .details-content {
+        padding: 15px;
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 992px) {
+    .container {
+        grid-template-columns: 280px 1fr var(--details-width);
+    }
+    
+    .container.details-open {
+        --details-width: 280px;
+    }
+    
+    .sidebar {
+        padding: 15px;
+    }
+}
+
+@media (max-width: 768px) {
+    .container {
+        grid-template-areas: 
+            "header"
+            "main"
+            "status";
+        grid-template-columns: 1fr;
+        grid-template-rows: 70px 1fr 35px;
+    }
+    
+    .container.details-open {
+        grid-template-areas: 
+            "header"
+            "details"
+            "status";
+    }
+    
+    .container.details-open .main {
+        display: none;
+    }
+    
+    .sidebar {
+        display: none;
+    }
+    
+    .details-panel {
+        grid-area: details;
+    }
+    
+    .header {
+        padding: 10px 15px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .range-controls {
+        width: 100%;
+        margin-left: 0;
+        margin-top: 10px;
+        justify-content: space-between;
+    }
+    
+    .range-controls input {
+        width: 60px;
+    }
 }

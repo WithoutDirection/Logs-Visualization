@@ -68,6 +68,10 @@
                         <input type="checkbox" id="show-legend">
                         Show Legend
                     </label>
+                    <label>
+                        <input type="checkbox" id="optimize-registry-paths" checked title="Automatically shorten long registry paths by replacing common prefixes with '~'. Select nodes to see full paths.">
+                        Optimize Registry Paths
+                    </label>
                 </div>
             </div>
             
@@ -129,6 +133,44 @@
                     </label>
                 </div>
             </div>
+            
+            <h3>🎮 Interaction Guide</h3>
+            <div class="filter-section">
+                <div style="font-size: 12px; color: #666; line-height: 1.4;">
+                    <div style="margin-bottom: 8px;"><strong>Mouse:</strong></div>
+                    <div>• Click nodes/edges to see details on right</div>
+                    <div>• Click empty space to hide details</div>
+                    <div>• Drag nodes to reposition (stays fixed)</div>
+                    <div>• Right-click for context menu & unfix options</div>
+                    <div>• Double-click to focus on node</div>
+                    <div>• Scroll to zoom in/out</div>
+                    <div style="margin: 8px 0;"><strong>Keyboard:</strong></div>
+                    <div>• <code>Ctrl+F</code> - Fit all nodes</div>
+                    <div>• <code>Space</code> - Toggle physics</div>
+                    <div>• <code>Escape</code> - Close details panel</div>
+                    <div>• <code>Ctrl+R</code> - Redraw graph</div>
+                    <div style="margin: 8px 0;"><strong>Node Positioning:</strong></div>
+                    <div style="font-size: 11px; color: #888;">
+                        • Dragged nodes stay in place automatically
+                    </div>
+                    <div style="font-size: 11px; color: #888;">
+                        • Right-click → "Unfix Node" to allow movement
+                    </div>
+                    <div style="font-size: 11px; color: #888;">
+                        • Right-click → "Unfix All Nodes" to reset all
+                    </div>
+                    <div style="margin: 8px 0;"><strong>Registry Paths:</strong></div>
+                    <div style="font-size: 11px; color: #888;">
+                        • Long registry paths are automatically shortened
+                    </div>
+                    <div style="font-size: 11px; color: #888;">
+                        • Select node to see full path in details
+                    </div>
+                    <div style="font-size: 11px; color: #888;">
+                        • Common prefixes shown as "~"
+                    </div>
+                </div>
+            </div>
         </div>
         
         <!-- Main visualization area -->
@@ -145,6 +187,19 @@
             <div class="loading" id="loading" style="display: none;">
                 <div class="loading-spinner"></div>
                 <div>Loading graph data...</div>
+            </div>
+        </div>
+
+        <!-- Node Details Panel -->
+        <div class="details-panel" id="details-panel">
+            <div class="details-header">
+                <h3>📄 Node Details</h3>
+                <button class="close-btn" id="close-details-btn">×</button>
+            </div>
+            <div class="details-content" id="details-content">
+                <div class="no-selection">
+                    <p>Click on a node to view its details</p>
+                </div>
             </div>
         </div>
         
@@ -171,6 +226,6 @@
     <!-- Notification container -->
     <div id="notification" class="notification"></div>
     
-    <script src="js/script.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>
