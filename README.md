@@ -1,12 +1,12 @@
 # 統一化日誌視覺化工具
 *Unified Log Entry Visualization Tool*
 
-這是一套以瀏覽器為核心的互動式圖形分析平台，專為安全分析師與研究人員設計，用來探索龐大的安全事件日誌並提取攻擊脈絡。主要特色包含視覺化關聯分析、進階序列偵測與多樣化的即時過濾功能。  
+這是一套以瀏覽器為核心的互動式圖形分析平台，專為安全分析師與研究人員設計，用來探索龐大的安全事件日誌並提取攻擊脈絡。
 *A browser-based interactive graph analytics platform tailored for security analysts and researchers. It visualizes massive security log datasets, highlights attack sequences, and offers real-time filtering controls.*
 
 ---
 
-## 🚀 功能總覽 (Features)
+## 功能總覽 (Features)
 - **互動式網路圖**：透過 vis.js 提供平滑、可拖曳縮放的節點／邊視覺化。  
    *Interactive vis.js network visualization with smooth drag-and-zoom interactions.*
 - **多類型節點支援**：同時呈現程序、檔案、登錄、網路節點，並以色彩樣式加以區分。  
@@ -22,7 +22,7 @@
 
 ---
 
-## 🛠 技術堆疊 (Technology Stack)
+## 技術堆疊 (Technology Stack)
 - 前端：HTML5、CSS3、ES6+ JavaScript  
    *Frontend: HTML5, CSS3, ES6+ JavaScript*
 - 視覺化：vis-network (vis.js)  
@@ -34,7 +34,7 @@
 
 ---
 
-## 📋 前置需求 (Prerequisites)
+## 前置需求 (Prerequisites)
 - Python 3.8 以上版本  
    *Python 3.8 or later*
 - 支援 ES6 的現代瀏覽器  
@@ -44,7 +44,7 @@
 
 ---
 
-## ⚙️ 快速開始 (Quick Start)
+## 快速開始 (Quick Start)
 1. 安裝依賴套件  
     *Install dependencies*
     ```bash
@@ -58,14 +58,14 @@
 3. 啟動本地伺服器  
     *Start local server*
     ```bash
-    python unified_viz_server.py --port 8001
+    python unified_viz_server.py (--port 8000 ```Default: 8000```)
     ```
-4. 開啟瀏覽器：前往 `http://localhost:8001`  
-    *Open browser and visit `http://localhost:8001`*
+4. 開啟瀏覽器：前往 `http://localhost:8000`  
+    *Open browser and visit `http://localhost:8000`*
 
 ---
 
-## 🎯 使用指引 (Usage Guide)
+## 使用指引 (Usage Guide)
 ### 載入圖形 (Loading Graphs)
 1. 從下拉選單選擇資料集。  
 2. 點擊「Load Graph」載入圖形。  
@@ -101,7 +101,7 @@
 
 ---
 
-## 🔧 組態調校 (Configuration)
+## 組態調校 (Configuration)
 - `CONFIG.visualization`：調整節點樣式、物理引擎參數與字體。  
 - `CONFIG.nodeColors`：自訂節點色彩與大小。  
 - `CONFIG.apiBaseUrl`：設定資料服務端點（預設 `./unified_viz_data`）。  
@@ -109,7 +109,7 @@
 
 ---
 
-## 📊 資料格式 (Data Format)
+## 資料格式 (Data Format)
 系統預期輸入為 CSV，常用欄位如下：  
 *The tool expects CSV input with the following fields:*  
 - `Process Name`（程序名稱）  
@@ -122,7 +122,7 @@
 
 ---
 
-## 🏗 架構概覽 (Architecture)
+## 架構概覽 (Architecture)
 ### 前端模組 (Frontend Modules)
 - `js/app.js`：應用程式進入點與事件協調。  
 - `js/modules/visualization.js`：視覺化與互動控制。  
@@ -140,7 +140,7 @@
 
 ---
 
-## 🔍 分析功能 (Analysis Features)
+## 分析功能 (Analysis Features)
 - **攻擊序列偵測**：辨識程序建立、檔案操作、登錄異常與網路行為。  
 - **REAPr 登錄檢視**：快速定位可能的持久化或組態異動。  
 - **統計面板**：節點／邊數量、日誌筆數、時間範圍即時顯示。  
@@ -148,7 +148,7 @@
 
 ---
 
-## 🎨 自訂化 (Customization)
+## 自訂化 (Customization)
 - 編輯 `css/styles.css` 調整配色、排版與響應式行為。  
 - 修改 `graphutil.py` 內的 `SequencePattern` 新增或調整攻擊樣式。  
 *Customize styles and extend attack pattern definitions as needed.*
@@ -169,7 +169,7 @@ SequencePattern(
 
 ---
 
-## 🐛 疑難排解 (Troubleshooting)
+## 疑難排解 (Troubleshooting)
 - **效能問題**：減少顯示的日誌範圍、關閉物理引擎或合併多餘邊。  
    *Reduce entry range, disable physics, or combine redundant edges to improve performance.*
 - **資料讀取異常**：確認 CSV 格式正確、檔案權限與資料夾結構。  
@@ -178,31 +178,3 @@ SequencePattern(
    *Recommended browsers: Chrome 70+, Firefox 65+, Safari 12+.*
 
 ---
-
-## 🤝 貢獻方式 (Contributing)
-1. Fork 專案。  
-2. 建立功能分支。  
-3. 完成功能並撰寫測試。  
-4. 提交 Pull Request。  
-*Fork the repo, create a feature branch, add tests, and open a pull request.*
-
----
-
-## 📄 授權條款 (License)
-本專案採用 MIT 授權，詳見 `LICENSE`。  
-*Released under the MIT License.*
-
----
-
-## 🙏 鳴謝 (Acknowledgments)
-- 感謝 [vis.js](https://visjs.org/) 提供強大的網路圖套件。  
-- 使用 [NetworkX](https://networkx.org/) 進行圖形分析。  
-- 靈感來源於安全事件日誌研究與社群經驗。  
-*Built on top of vis.js and NetworkX, inspired by real-world security log analysis.*
-
----
-
-**版本**：2.0.0  
-**最後更新**：2025-01-26  
-**作者**：LogViz 開發團隊  
-*Version 2.0.0 · Last updated 2025-01-26 · LogViz Development Team*
