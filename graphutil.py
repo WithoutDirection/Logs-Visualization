@@ -459,7 +459,6 @@ def create_interactive_entry_visualization(G, edge_metadata, malicious_specs=Non
         )
     
     # Create base visualization
-    from pyvis.network import Network
     net = Network(notebook=True, height="600px", width="100%", bgcolor="#ffffff", directed=True)
     
     # Add all nodes with styling
@@ -1226,7 +1225,6 @@ def create_sequence_grouped_visualization(G, edge_metadata, malicious_specs=None
             malicious_specs = None
     
     # Create visualization
-    from pyvis.network import Network
     net = Network(notebook=True, height="700px", width="100%", bgcolor="#ffffff", directed=True)
     
     # Add nodes with REAPr or default styling

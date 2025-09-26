@@ -17,8 +17,6 @@ import pandas as pd
 from glob import glob
 from datetime import datetime
 from collections import defaultdict, namedtuple
-import re
-import uuid
 import networkx as nx
 from tqdm import tqdm
 
