@@ -176,5 +176,4 @@ SequencePattern(
    *Verify CSV format, file permissions, and directory structure.*
 - **瀏覽器相容性**：建議使用 Chrome 70+、Firefox 65+、Safari 12+。  
    *Recommended browsers: Chrome 70+, Firefox 65+, Safari 12+.*
-
 ---
