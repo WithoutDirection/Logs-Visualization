@@ -79,10 +79,43 @@
 *Navigate log windows, toggle node types, and tune the confidence slider to refine the graph.*
 
 ### 搜尋 (Search)
-- 在標頭的搜尋框輸入關鍵字，按 Enter 執行搜尋。  
-- 節點以金色高亮、邊以紅橘色標示。  
-- 按 Esc 清除搜尋結果。  
-*Use the header search box, press Enter to search, and Esc to clear highlights.*
+- **基本搜尋**：在標頭的搜尋框輸入關鍵字，按 Enter 執行搜尋。  
+  *Use the header search box and press Enter to search.*
+  
+- **進階搜尋模式**：支援多種搜尋模式，可組合使用：  
+  *Advanced search patterns that can be combined:*
+  - **操作搜尋** (Operation): `op:RegRead` 或 `RegWrite`  
+    *Search by operation type*
+  - **登錄路徑** (Registry): `HKLM\System\CurrentControlSet`  
+    *Search by registry path*
+  - **程序搜尋** (Process): `pid:1234` 或 `process:cmd.exe`  
+    *Search by process ID or name*
+  - **類型篩選** (Type): `type:registry` 或 `type:process`  
+    *Filter by node type*
+  - **組合搜尋** (Combined): `RegRead HKLM\Software` 或 `op:RegWrite type:registry`  
+    *Combine multiple patterns*
+
+- **搜尋模式** (Search Modes):  
+  - **高亮模式** (Highlight): 顯示所有節點，符合項目以金色/紅橘色標示  
+    *Show all nodes with matches highlighted in gold/red-orange*
+  - **篩選模式** (Filter): 僅顯示符合的節點與邊  
+    *Show only matching nodes and edges*
+  - 可在側邊欄「Search Options」切換模式  
+    *Toggle mode in sidebar "Search Options"*
+
+- **結果限制**：最多顯示 200 個結果，避免介面過載  
+  *Results limited to 200 items to prevent UI overload*
+  
+- **搜尋幫助**：點擊 ❓ 按鈕查看完整搜尋模式指南  
+  *Click ❓ button for complete search pattern guide*
+  
+- **快捷鍵**：Enter 執行搜尋、Esc 清除搜尋結果  
+  *Shortcuts: Enter to search, Esc to clear*
+
+**搜尋功能說明文件** (Search Documentation):
+- [SEARCH_GUIDE.md](SEARCH_GUIDE.md) - 使用者快速參考指南 / User quick reference guide
+- [SEARCH_IMPLEMENTATION.md](SEARCH_IMPLEMENTATION.md) - 技術實作細節 / Technical implementation details
+- [CODE_ORGANIZATION.md](CODE_ORGANIZATION.md) - 程式碼架構說明 / Code structure guide
 
 ### 視覺化選項 (Visualization Options)
 - 序列群組：啟用攻擊序列集合顯示。  

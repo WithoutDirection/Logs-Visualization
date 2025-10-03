@@ -6,13 +6,19 @@
 import { CONFIG } from '../config.js';
 import DOMHelper from './dom-helper.js';
 import notificationSystem from './notifications.js';
+import * as SearchUtils from './search-utils.js';
 
 class Search {
-    constructor(visualization) {
+    constructor(visualization, app) {
         this.visualization = visualization;
+        this.app = app; // Reference to app for triggering data reload
         this.searchResults = new Set();
         this.currentSearchTerm = '';
         this.searchIndex = new Map(); // node/edge id -> searchable text
+        this.rawDataIndex = new Map(); // Full dataset index
+        this.maxSearchResults = 500; // Maximum number of results to display
+        this.searchMode = 'highlight'; // 'highlight' or 'filter'
+        this.isSearchActive = false;
     }
 
     /**
@@ -29,6 +35,8 @@ class Search {
         const searchInput = DOMHelper.getElementById('search-input');
         const searchBtn = DOMHelper.getElementById('search-btn');
         const clearBtn = DOMHelper.getElementById('clear-search-btn');
+        const helpBtn = DOMHelper.getElementById('search-help-btn');
+        const filterModeCheckbox = DOMHelper.getElementById('search-filter-mode');
 
         if (searchInput) {
             searchInput.addEventListener('input', (e) => this.handleSearchInput(e.target.value));
@@ -53,51 +61,86 @@ class Search {
         if (clearBtn) {
             clearBtn.addEventListener('click', () => this.clearSearch());
         }
+
+        if (helpBtn) {
+            helpBtn.addEventListener('click', () => this.showSearchHelp());
+        }
+
+        if (filterModeCheckbox) {
+            filterModeCheckbox.addEventListener('change', (e) => {
+                this.searchMode = e.target.checked ? 'filter' : 'highlight';
+                // Re-apply current search if there is one
+                if (this.currentSearchTerm) {
+                    this.performSearch(this.currentSearchTerm);
+                }
+            });
+        }
+
+        // Modal close handlers
+        this.setupModalHandlers();
+    }
+
+    /**
+     * Setup modal event handlers
+     */
+    setupModalHandlers() {
+        const modal = document.getElementById('search-help-modal');
+        if (!modal) return;
+
+        const closeBtn = modal.querySelector('.modal-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.hideSearchHelp());
+        }
+
+        // Close modal when clicking outside
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                this.hideSearchHelp();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.style.display !== 'none') {
+                this.hideSearchHelp();
+            }
+        });
+    }
+
+    /**
+     * Show search help modal
+     */
+    showSearchHelp() {
+        const modal = document.getElementById('search-help-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+        }
+    }
+
+    /**
+     * Hide search help modal
+     */
+    hideSearchHelp() {
+        const modal = document.getElementById('search-help-modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
     }
 
     /**
      * Build search index from graph data
      * @param {Object} data - Graph data containing nodes and edges
+     * @param {boolean} isRawData - Whether this is the full raw dataset
      */
-    buildSearchIndex(data) {
-        this.searchIndex.clear();
-
-        if (!data) return;
-
-        // Index nodes
-        data.nodes.forEach(node => {
-            const searchableText = [
-                node.label,
-                node.id,
-                node.type,
-                node.title || ''
-            ].join(' ').toLowerCase();
-
-            this.searchIndex.set(`node-${node.id}`, {
-                type: 'node',
-                id: node.id,
-                text: searchableText,
-                data: node
-            });
-        });
-
-        // Index edges
-        data.edges.forEach(edge => {
-            const searchableText = [
-                edge.operation,
-                edge.src,
-                edge.dst,
-                edge.title || '',
-                edge.metadata || ''
-            ].join(' ').toLowerCase();
-
-            this.searchIndex.set(`edge-${edge.id || `${edge.src}-${edge.dst}`}`, {
-                type: 'edge',
-                id: edge.id || `${edge.src}-${edge.dst}`,
-                text: searchableText,
-                data: edge
-            });
-        });
+    buildSearchIndex(data, isRawData = false) {
+        const targetIndex = isRawData ? this.rawDataIndex : this.searchIndex;
+        const newIndex = SearchUtils.buildSearchIndex(data);
+        
+        // Clear and populate the target index
+        targetIndex.clear();
+        for (const [key, value] of newIndex) {
+            targetIndex.set(key, value);
+        }
     }
 
     /**
@@ -129,20 +172,54 @@ class Search {
      * Perform search operation
      * @param {string} query - Search query
      */
-    performSearch(query) {
+    async performSearch(query) {
         if (!query || query.trim().length === 0) {
             this.clearSearch();
             return;
         }
 
         const searchTerm = query.trim().toLowerCase();
+        this.currentSearchTerm = searchTerm;
         this.searchResults.clear();
+        this.isSearchActive = true;
 
-        // Find matches
-        for (const [key, item] of this.searchIndex) {
-            if (item.text.includes(searchTerm)) {
+        // Parse search query for special patterns
+        const searchPatterns = SearchUtils.parseSearchQuery(searchTerm);
+
+        // Search in raw data index (complete dataset)
+        const matchingEntryIndices = new Set();
+        const matchingNodeIds = new Set();
+        const useRawIndex = this.rawDataIndex.size > 0;
+        const searchSource = useRawIndex ? this.rawDataIndex : this.searchIndex;
+
+        // Find all matching edges and collect their entry indices
+        for (const [key, item] of searchSource) {
+            if (SearchUtils.matchesSearchPatterns(item, searchPatterns)) {
                 this.searchResults.add(item);
+                
+                // Collect entry index for edges to get complete raw events
+                if (item.type === 'edge' && item.entry_index) {
+                    matchingEntryIndices.add(item.entry_index);
+                }
+                
+                // Collect node IDs
+                if (item.type === 'node') {
+                    matchingNodeIds.add(item.id);
+                }
+                
+                // Stop if we've reached the maximum number of results
+                if (this.searchResults.size >= this.maxSearchResults) {
+                    break;
+                }
             }
+        }
+
+        // Disable entry range controls during search
+        this.toggleRangeControls(false);
+
+        // Notify app to reload with search filter (no entry range limit)
+        if (this.app && matchingEntryIndices.size > 0) {
+            await this.app.applySearchFilter(Array.from(matchingEntryIndices));
         }
 
         // Update visualization
@@ -150,14 +227,86 @@ class Search {
 
         // Update UI
         const resultCount = this.searchResults.size;
+        const totalMatches = SearchUtils.countTotalMatches(searchPatterns, searchSource);
+        
+        // Update result info display
+        this.updateSearchResultInfo(resultCount, totalMatches, query);
+        
         if (resultCount > 0) {
-            notificationSystem.showSuccess(`Found ${resultCount} result${resultCount === 1 ? '' : 's'} for "${query}"`);
+            if (totalMatches > this.maxSearchResults) {
+                notificationSystem.showInfo(
+                    `Showing ${resultCount} of ${totalMatches}+ results for "${query}". ` +
+                    `Results span entire dataset (range filter disabled).`
+                );
+            } else {
+                notificationSystem.showSuccess(
+                    `Found ${resultCount} result${resultCount === 1 ? '' : 's'} for "${query}". ` +
+                    `Showing all matches from entire dataset.`
+                );
+            }
         } else {
             notificationSystem.showInfo(`No results found for "${query}"`);
         }
 
         // Update filter text
-        notificationSystem.updateFilter(`Search: "${query}" (${resultCount} results)`);
+        const modeText = this.searchMode === 'filter' ? 'Filtered' : 'Highlighted';
+        notificationSystem.updateFilter(`Search: "${query}" (${resultCount} ${modeText})`);
+    }
+
+    /**
+     * Update search result info display
+     * @param {number} resultCount - Number of results shown
+     * @param {number} totalMatches - Total matches found
+     * @param {string} query - Search query
+     */
+    updateSearchResultInfo(resultCount, totalMatches, query) {
+        // Update modal result info
+        const resultInfo = DOMHelper.getElementById('search-result-info');
+        const resultText = DOMHelper.getElementById('search-result-text');
+        
+        // Update header result info
+        const resultInfoHeader = DOMHelper.getElementById('search-result-info-header');
+        const resultTextHeader = DOMHelper.getElementById('search-result-text-header');
+        
+        if (resultCount > 0) {
+            let message = `<strong>✓ ${resultCount} Result${resultCount === 1 ? '' : 's'} Found</strong>`;
+            if (totalMatches > this.maxSearchResults) {
+                message += ` <em>(showing first ${resultCount} of ${totalMatches}+ total matches)</em>`;
+            }
+            message += `<br>Search: <code>"${query}"</code>`;
+            
+            if (this.searchMode === 'filter') {
+                message += '<br><small>📌 Filter Mode: Showing only matching nodes/edges</small>';
+            } else {
+                message += '<br><small>💡 Matches highlighted in gold. Enable "Search Filter Mode" to show only results.</small>';
+            }
+            
+            // Simple message for header
+            const headerMessage = `🔍 Found ${resultCount} result${resultCount === 1 ? '' : 's'} for "${query}" - <strong>Showing all matching events from entire dataset</strong>`;
+            
+            if (resultInfo && resultText) {
+                resultInfo.style.display = 'block';
+                resultText.innerHTML = message;
+            }
+            
+            if (resultInfoHeader && resultTextHeader) {
+                resultInfoHeader.style.display = 'block';
+                resultTextHeader.innerHTML = headerMessage;
+            }
+        } else {
+            const message = `<strong>⚠ No Results</strong><br>Search: <code>"${query}"</code><br><small>Try different search terms or patterns</small>`;
+            const headerMessage = `⚠ No results found for "${query}"`;
+            
+            if (resultInfo && resultText) {
+                resultInfo.style.display = 'block';
+                resultText.innerHTML = message;
+            }
+            
+            if (resultInfoHeader && resultTextHeader) {
+                resultInfoHeader.style.display = 'block';
+                resultTextHeader.innerHTML = headerMessage;
+            }
+        }
     }
 
     /**
@@ -166,77 +315,115 @@ class Search {
     highlightSearchResults() {
         if (!this.visualization.network) return;
 
-        const nodeIds = [];
-        const edgeIds = [];
+        const nodeIds = SearchUtils.extractNodeIds(this.searchResults);
+        const edgeIds = SearchUtils.extractEdgeIds(this.searchResults);
 
-        // Collect IDs of matching nodes and edges
-        for (const result of this.searchResults) {
-            if (result.type === 'node') {
-                nodeIds.push(result.id);
-            } else if (result.type === 'edge') {
-                edgeIds.push(result.id);
-            }
-        }
+        const isFilterMode = this.searchMode === 'filter';
 
-        // Update node colors for highlighting
+        // Update node colors and visibility
         const nodes = this.visualization.network.body.data.nodes;
         const allNodeIds = nodes.getIds();
 
+        const nodeUpdates = [];
         allNodeIds.forEach(nodeId => {
             const node = nodes.get(nodeId);
             if (node) {
                 const isHighlighted = nodeIds.includes(nodeId);
-                // Store original color if not already stored
+                const update = { id: nodeId };
+                
+                // Store original properties if not already stored
                 if (!node.originalColor && node.color) {
                     node.originalColor = node.color;
                 }
-
-                // Apply highlight color
-                if (isHighlighted) {
-                    node.color = {
-                        background: '#FFD700', // Gold
-                        border: '#FFA500' // Orange
-                    };
-                } else {
-                    // Restore original color
-                    node.color = node.originalColor || node.color;
+                if (node.originalHidden === undefined) {
+                    node.originalHidden = node.hidden || false;
                 }
+
+                if (isFilterMode) {
+                    // Filter mode: hide non-matching nodes
+                    update.hidden = !isHighlighted;
+                } else {
+                    // Highlight mode: show all but highlight matches
+                    update.hidden = false;
+                    
+                    if (isHighlighted) {
+                        update.color = {
+                            background: '#FFD700', // Gold
+                            border: '#FFA500', // Orange
+                            highlight: {
+                                background: '#FFED4E',
+                                border: '#FF8C00'
+                            }
+                        };
+                        update.borderWidth = 3;
+                    } else {
+                        update.color = node.originalColor || node.color;
+                        update.borderWidth = 1;
+                    }
+                }
+                
+                nodeUpdates.push(update);
             }
         });
+        
+        if (nodeUpdates.length > 0) {
+            nodes.update(nodeUpdates);
+        }
 
-        // Update edge colors for highlighting
+        // Update edge colors and visibility
         const edges = this.visualization.network.body.data.edges;
         const allEdgeIds = edges.getIds();
 
+        const edgeUpdates = [];
         allEdgeIds.forEach(edgeId => {
             const edge = edges.get(edgeId);
             if (edge) {
                 const isHighlighted = edgeIds.includes(edgeId);
-                // Store original color if not already stored
+                const update = { id: edgeId };
+                
+                // Store original properties if not already stored
                 if (!edge.originalColor && edge.color) {
                     edge.originalColor = edge.color;
                 }
-
-                // Apply highlight color
-                if (isHighlighted) {
-                    edge.color = {
-                        color: '#FF4500', // Red-Orange
-                        highlight: '#FF6347' // Tomato
-                    };
-                    edge.width = 3;
-                } else {
-                    // Restore original color and width
-                    edge.color = edge.originalColor || edge.color;
-                    edge.width = edge.originalWidth || 1;
+                if (!edge.originalWidth) {
+                    edge.originalWidth = edge.width || 1;
                 }
+                if (edge.originalHidden === undefined) {
+                    edge.originalHidden = edge.hidden || false;
+                }
+
+                if (isFilterMode) {
+                    // Filter mode: hide non-matching edges
+                    update.hidden = !isHighlighted;
+                } else {
+                    // Highlight mode: show all but highlight matches
+                    update.hidden = false;
+                    
+                    if (isHighlighted) {
+                        update.color = {
+                            color: '#FF4500', // Red-Orange
+                            highlight: '#FF6347' // Tomato
+                        };
+                        update.width = 3;
+                    } else {
+                        update.color = edge.originalColor || edge.color;
+                        update.width = edge.originalWidth || 1;
+                    }
+                }
+                
+                edgeUpdates.push(update);
             }
         });
+        
+        if (edgeUpdates.length > 0) {
+            edges.update(edgeUpdates);
+        }
 
         // Refresh the network
         this.visualization.network.redraw();
 
-        // Focus on search results if any found
-        if (nodeIds.length > 0) {
+        // Focus on search results if any found and in filter mode
+        if (nodeIds.length > 0 && isFilterMode) {
             setTimeout(() => {
                 if (this.visualization.network) {
                     this.visualization.network.fit({
@@ -251,9 +438,10 @@ class Search {
     /**
      * Clear search results and highlighting
      */
-    clearSearch() {
+    async clearSearch() {
         this.searchResults.clear();
         this.currentSearchTerm = '';
+        this.isSearchActive = false;
 
         // Clear search input
         const searchInput = DOMHelper.getElementById('search-input');
@@ -261,12 +449,70 @@ class Search {
             searchInput.value = '';
         }
 
-        // Remove highlighting
-        this.highlightSearchResults();
+        // Hide result info
+        const resultInfo = DOMHelper.getElementById('search-result-info');
+        if (resultInfo) {
+            resultInfo.style.display = 'none';
+        }
+        
+        const resultInfoHeader = DOMHelper.getElementById('search-result-info-header');
+        if (resultInfoHeader) {
+            resultInfoHeader.style.display = 'none';
+        }
+
+        // Re-enable entry range controls
+        this.toggleRangeControls(true);
+
+        // Notify app to restore normal range filtering
+        if (this.app) {
+            await this.app.clearSearchFilter();
+        }
+
+        // Restore all nodes and edges to original state
+        if (this.visualization.network) {
+            const nodes = this.visualization.network.body.data.nodes;
+            const edges = this.visualization.network.body.data.edges;
+            
+            // Restore nodes
+            const allNodeIds = nodes.getIds();
+            const nodeUpdates = [];
+            allNodeIds.forEach(nodeId => {
+                const node = nodes.get(nodeId);
+                if (node) {
+                    const update = { id: nodeId };
+                    update.hidden = node.originalHidden || false;
+                    update.color = node.originalColor || node.color;
+                    update.borderWidth = 1;
+                    nodeUpdates.push(update);
+                }
+            });
+            if (nodeUpdates.length > 0) {
+                nodes.update(nodeUpdates);
+            }
+            
+            // Restore edges
+            const allEdgeIds = edges.getIds();
+            const edgeUpdates = [];
+            allEdgeIds.forEach(edgeId => {
+                const edge = edges.get(edgeId);
+                if (edge) {
+                    const update = { id: edgeId };
+                    update.hidden = edge.originalHidden || false;
+                    update.color = edge.originalColor || edge.color;
+                    update.width = edge.originalWidth || 1;
+                    edgeUpdates.push(update);
+                }
+            });
+            if (edgeUpdates.length > 0) {
+                edges.update(edgeUpdates);
+            }
+            
+            this.visualization.network.redraw();
+        }
 
         // Update UI
         notificationSystem.updateFilter('None');
-        notificationSystem.showInfo('Search cleared');
+        notificationSystem.showInfo('Search cleared - restored to range view');
     }
 
     /**
@@ -275,22 +521,71 @@ class Search {
      * @returns {Array<string>} Array of suggestions
      */
     getSearchSuggestions(query) {
-        if (!query || query.length < 1) return [];
+        return SearchUtils.getSearchSuggestions(query, this.searchIndex, 10);
+    }
 
-        const suggestions = new Set();
-        const lowerQuery = query.toLowerCase();
+    /**
+     * Toggle entry range controls enabled/disabled state
+     * @param {boolean} enabled - Whether controls should be enabled
+     */
+    toggleRangeControls(enabled) {
+        const rangeControls = [
+            'entry-start',
+            'entry-end',
+            'apply-range-btn',
+            'last-window-btn',
+            'next-window-btn'
+        ];
 
-        for (const item of this.searchIndex.values()) {
-            // Find words that start with the query
-            const words = item.text.split(/\s+/);
-            words.forEach(word => {
-                if (word.startsWith(lowerQuery) && word.length > lowerQuery.length) {
-                    suggestions.add(word);
+        rangeControls.forEach(id => {
+            const element = DOMHelper.getElementById(id);
+            if (element) {
+                element.disabled = !enabled;
+                if (!enabled) {
+                    element.style.opacity = '0.5';
+                    element.style.cursor = 'not-allowed';
+                } else {
+                    element.style.opacity = '1';
+                    element.style.cursor = '';
                 }
-            });
-        }
+            }
+        });
 
-        return Array.from(suggestions).slice(0, 10); // Limit to 10 suggestions
+        // Also disable preset buttons
+        const presetButtons = document.querySelectorAll('.preset-btn');
+        presetButtons.forEach(btn => {
+            btn.disabled = !enabled;
+            if (!enabled) {
+                btn.style.opacity = '0.5';
+                btn.style.cursor = 'not-allowed';
+            } else {
+                btn.style.opacity = '1';
+                btn.style.cursor = '';
+            }
+        });
+
+        // Add visual indicator
+        const rangeNav = document.querySelector('.range-controls');
+        if (rangeNav) {
+            if (!enabled) {
+                rangeNav.classList.add('search-active');
+                // Add info message if not already present
+                let searchInfo = document.getElementById('search-range-info');
+                if (!searchInfo) {
+                    searchInfo = document.createElement('div');
+                    searchInfo.id = 'search-range-info';
+                    searchInfo.className = 'search-range-info';
+                    searchInfo.innerHTML = '🔍 <strong>Search Active:</strong> Entry range filter disabled - showing all matching events from entire dataset';
+                    rangeNav.insertBefore(searchInfo, rangeNav.firstChild);
+                }
+            } else {
+                rangeNav.classList.remove('search-active');
+                const searchInfo = document.getElementById('search-range-info');
+                if (searchInfo) {
+                    searchInfo.remove();
+                }
+            }
+        }
     }
 }
 

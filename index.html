@@ -26,14 +26,25 @@
     <div class="container">
         <!-- Header/Control Panel -->
         <header class="header" role="banner">
-            <div class="graph-controls">
-                <label for="graph-selector" class="sr-only">Select Event Graph</label>
-                <select id="graph-selector" aria-describedby="graph-selector-help">
-                    <option value="">Select Event Graph...</option>
-                </select>
-                <span id="graph-selector-help" class="sr-only">Choose a graph file to visualize</span>
-                <button id="load-btn" disabled aria-describedby="load-btn-help">Load Graph</button>
-                <span id="load-btn-help" class="sr-only">Load the selected graph for visualization</span>
+            <div class="header-row">
+                <div class="graph-controls">
+                    <label for="graph-selector" class="sr-only">Select Event Graph</label>
+                    <select id="graph-selector" aria-describedby="graph-selector-help">
+                        <option value="">Select Event Graph...</option>
+                    </select>
+                    <span id="graph-selector-help" class="sr-only">Choose a graph file to visualize</span>
+                    <button id="load-btn" disabled aria-describedby="load-btn-help">Load Graph</button>
+                    <span id="load-btn-help" class="sr-only">Load the selected graph for visualization</span>
+                </div>
+
+                <div class="search-controls">
+                    <label for="search-input" class="sr-only">Search nodes and edges</label>
+                    <input type="text" id="search-input" placeholder="Search: RegRead, HKLM\..., pid:1234..." aria-describedby="search-help" title="Press ? for help">
+                    <span id="search-help" class="sr-only">Search for specific nodes or edges in the graph. Supports: op:RegRead, HKLM\path, pid:1234, type:registry</span>
+                    <button id="search-btn" aria-label="Perform search" title="Search">🔍</button>
+                    <button id="clear-search-btn" aria-label="Clear search results" title="Clear search">✕</button>
+                    <button id="search-help-btn" aria-label="Search help" title="Show search patterns help">?</button>
+                </div>
             </div>
 
             <nav class="range-controls" aria-label="Entry Range Navigation">
@@ -51,13 +62,10 @@
                     <span id="apply-range-help" class="sr-only">Apply the specified entry range filter</span>
                 </div>
             </nav>
-
-            <div class="search-controls">
-                <label for="search-input" class="sr-only">Search nodes and edges</label>
-                <input type="text" id="search-input" placeholder="Search nodes/edges..." aria-describedby="search-help">
-                <span id="search-help" class="sr-only">Search for specific nodes or edges in the graph</span>
-                <button id="search-btn" aria-label="Perform search">🔍</button>
-                <button id="clear-search-btn" aria-label="Clear search results">✕</button>
+            
+            <!-- Search result info display -->
+            <div class="search-result-info" id="search-result-info-header" style="display: none; margin-top: 5px; background: rgba(255,255,255,0.95);">
+                <span id="search-result-text-header" style="color: #1565c0;"></span>
             </div>
         </header>
         
@@ -203,6 +211,12 @@
                             Combine Same Operations
                         </label>
                         <span id="combine-edges-help" class="sr-only">Combine multiple identical operations into single edges with counts</span>
+                        
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="search-filter-mode" aria-describedby="search-filter-mode-help" title="When enabled, only matching nodes/edges are shown. When disabled, all nodes are shown but matches are highlighted.">
+                            Search Filter Mode
+                        </label>
+                        <span id="search-filter-mode-help" class="sr-only">Toggle between highlighting matches or showing only matching results</span>
                     </div>
                 </fieldset>
             </section>
@@ -316,6 +330,79 @@
 
     <!-- Notification container -->
     <div id="notification" class="notification" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Search Help Modal -->
+    <div id="search-help-modal" class="modal" style="display: none;" role="dialog" aria-labelledby="search-help-title" aria-modal="true">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="search-help-title">🔍 Advanced Search Guide</h2>
+                <button class="modal-close" aria-label="Close help">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="search-result-info" id="search-result-info" style="margin-bottom: 20px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px;">
+                    <span id="search-result-text" style="font-size: 0.95em; color: #1565c0;"></span>
+                </div>
+                
+                <h3>🎯 Search Patterns</h3>
+                <div class="pattern-list">
+                    <div class="pattern-item">
+                        <strong>Operation Search</strong>
+                        <code>op:RegRead</code> or <code>RegWrite</code>
+                        <p>Find edges with specific operations like RegRead, RegWrite, RegQuery, Process Start, etc.</p>
+                    </div>
+                    
+                    <div class="pattern-item">
+                        <strong>Registry Path</strong>
+                        <code>HKLM\System\CurrentControlSet</code>
+                        <p>Find registry nodes/edges matching the path pattern. Works with HKLM, HKCU, HKCR, HKU.</p>
+                    </div>
+                    
+                    <div class="pattern-item">
+                        <strong>Process Search</strong>
+                        <code>pid:1234</code> or <code>process:cmd.exe</code>
+                        <p>Find processes by PID or name.</p>
+                    </div>
+                    
+                    <div class="pattern-item">
+                        <strong>Type Filter</strong>
+                        <code>type:registry</code> or <code>type:process</code>
+                        <p>Filter by node type (registry, process, file, network).</p>
+                    </div>
+                    
+                    <div class="pattern-item">
+                        <strong>General Search</strong>
+                        <code>any text</code>
+                        <p>Search across all node and edge properties.</p>
+                    </div>
+                </div>
+
+                <h3>💡 Examples</h3>
+                <ul class="example-list">
+                    <li><code>RegRead HKLM\Software</code> - RegRead operations on HKLM\Software</li>
+                    <li><code>op:RegWrite type:registry</code> - RegWrite operations on registry nodes</li>
+                    <li><code>pid:1234</code> - All events related to process with PID 1234</li>
+                    <li><code>cmd.exe</code> - All nodes/edges related to cmd.exe</li>
+                    <li><code>Process Start</code> - All process start operations</li>
+                </ul>
+
+                <h3>⚙️ How It Works</h3>
+                <ul class="info-list">
+                    <li><strong>Full Dataset Search:</strong> Search scans the entire dataset, not just the current range</li>
+                    <li><strong>Complete Events:</strong> When a match is found, the entire raw event (including related nodes and edges) is displayed</li>
+                    <li><strong>Range Override:</strong> Entry range filters are ignored during search to show all results</li>
+                    <li><strong>Result Limit:</strong> Maximum 500 results displayed to maintain performance</li>
+                    <li><strong>Filter Mode:</strong> Enable "Search Filter Mode" in Layout Options to show only matching results</li>
+                </ul>
+
+                <h3>⌨️ Shortcuts</h3>
+                <ul class="shortcut-list">
+                    <li><kbd>Enter</kbd> - Execute search</li>
+                    <li><kbd>ESC</kbd> - Clear search and restore range view</li>
+                    <li><kbd>?</kbd> - Open this help (click ? button in search bar)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
 
     <script type="module" src="js/app.js"></script>
 </body>

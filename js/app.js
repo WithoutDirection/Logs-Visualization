@@ -16,8 +16,10 @@ class LogVisualizationApp {
         this.graphLoader = new GraphLoader();
         this.dataFilters = new DataFilters();
         this.visualization = new Visualization();
-        this.search = new Search(this.visualization);
+        this.search = new Search(this.visualization, this);
         this.filteredData = null;
+        this.searchFilterActive = false;
+        this.searchEntryIndices = [];
         
         this.init();
     }
@@ -249,12 +251,38 @@ class LogVisualizationApp {
     async loadGraph(graphId) {
         try {
             await this.graphLoader.loadGraph(graphId);
+            
+            // Build raw data index for search
+            const rawData = this.graphLoader.getCurrentData();
+            if (rawData) {
+                this.search.buildSearchIndex(rawData, true); // true = raw data index
+            }
+            
             this.updateVisualization();
             this.updateLegend();
         } catch (error) {
             console.error('Failed to load graph:', error);
             // Error handling is done in GraphLoader
         }
+    }
+
+    /**
+     * Apply search filter (called by Search module)
+     * @param {Array<number>} entryIndices - Entry indices matching search
+     */
+    async applySearchFilter(entryIndices) {
+        this.searchFilterActive = true;
+        this.searchEntryIndices = entryIndices;
+        this.updateVisualization();
+    }
+
+    /**
+     * Clear search filter (called by Search module)
+     */
+    async clearSearchFilter() {
+        this.searchFilterActive = false;
+        this.searchEntryIndices = [];
+        this.updateVisualization();
     }
 
     /**
@@ -476,10 +504,12 @@ class LogVisualizationApp {
         const startTime = performance.now();
         
         // Apply filters to create filtered dataset
-        this.filteredData = this.dataFilters.applyFilters(currentData);
+        // If search is active, pass search entry indices
+        const searchIndices = this.searchFilterActive ? this.searchEntryIndices : null;
+        this.filteredData = this.dataFilters.applyFilters(currentData, searchIndices);
         
-        // Build search index for the filtered data
-        this.search.buildSearchIndex(this.filteredData);
+        // Build search index for the filtered data (for current view)
+        this.search.buildSearchIndex(this.filteredData, false);
         
         // Create vis.js network
         this.visualization.createNetworkVisualization(this.filteredData);
