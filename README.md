@@ -5,6 +5,10 @@
 *A browser-based interactive graph analytics platform tailored for security analysts and researchers. It visualizes massive security log datasets, highlights attack sequences, and offers real-time filtering controls.*
 
 ---
+Todo
+* Change the architecture into django-React framework
+* Add a upload csv file function into database
+---
 
 ## 功能總覽 (Features)
 - **互動式網路圖**：透過 vis.js 提供平滑、可拖曳縮放的節點／邊視覺化。  
