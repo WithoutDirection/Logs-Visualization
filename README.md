@@ -1,216 +1,237 @@
-# 統一化日誌視覺化工具
-*Unified Log Entry Visualization Tool*
+# LogViz - 日誌視覺化工具
 
-這是一套以瀏覽器為核心的互動式圖形分析平台，專為安全分析師與研究人員設計，用來探索龐大的安全事件日誌並提取攻擊脈絡。
-*A browser-based interactive graph analytics platform tailored for security analysts and researchers. It visualizes massive security log datasets, highlights attack sequences, and offers real-time filtering controls.*
-
----
-Todo
-* Change the architecture into django-React framework
-* Add a upload csv file function into database
----
-
-## 功能總覽 (Features)
-- **互動式網路圖**：透過 vis.js 提供平滑、可拖曳縮放的節點／邊視覺化。  
-   *Interactive vis.js network visualization with smooth drag-and-zoom interactions.*
-- **多類型節點支援**：同時呈現程序、檔案、登錄、網路節點，並以色彩樣式加以區分。  
-   *Supports process, file, registry, and network node types with dedicated styling.*
-- **即時統計資訊**：節點數、邊數、時間範圍等指標即時更新。  
-   *Live statistics for nodes, edges, and time ranges.*
-- **進階分析**：支援攻擊序列偵測、REAPr 登錄分析與信心閾值設定。  
-   *Advanced analytics including sequence detection, REAPr registry insights, and confidence thresholds.*
-- **高效載入**：內建漸進式載入與自動性能調校，可妥善處理 500+ 節點的大型圖。  
-   *Progressive loading and adaptive performance tuning for graphs with 500+ nodes.*
-- **搜尋與快捷鍵**：提供節點／邊全文搜尋、鍵盤操作與無障礙導覽。  
-   *Full-text search for nodes/edges, keyboard shortcuts, and accessibility support.*
+一個幫助您快速理解和分析電腦行為記錄的視覺化工具。將複雜的系統日誌轉換成互動式的圖形,讓您能夠輕鬆找出可疑活動。
 
 ---
 
-## 技術堆疊 (Technology Stack)
-- 前端：HTML5、CSS3、ES6+ JavaScript  
-   *Frontend: HTML5, CSS3, ES6+ JavaScript*
-- 視覺化：vis-network (vis.js)  
-   *Visualization: vis-network (vis.js)*
-- 後端：Python 3.x 簡易 HTTP 伺服器  
-   *Backend: Python 3.x lightweight HTTP server*
-- 資料處理：NetworkX、Pandas、NumPy  
-   *Data processing: NetworkX, Pandas, NumPy*
+## 📖 這個工具能做什麼?
+
+LogViz 能將電腦系統的操作記錄(Process Monitor 日誌)轉換成視覺化的網路圖。圖形中的**圓點**代表不同的物件(程式、檔案、登錄、網路連線),**箭頭**表示它們之間的操作關係。
+
+### 主要功能
+
+✨ **互動式圖形**
+- 用滑鼠拖曳、縮放來查看整個關係網路
+- 點擊圓點或箭頭可看到詳細資訊
+- 不同顏色代表不同類型的物件(綠色=程式、紫色=檔案、藍色=登錄、黃色=網路)
+
+🔍 **強大的搜尋功能**
+- 快速找出特定操作(例如:檔案寫入、登錄讀取)
+- 搜尋特定程式或檔案路徑
+- 搜尋結果會自動展開完整的相關路徑
+
+📊 **即時統計資訊**
+- 顯示當前有多少圓點(節點)和箭頭(關聯)
+- 顯示時間範圍和日誌筆數
+- 幫助您掌握資料的整體狀況
+
+🎯 **聰明的篩選**
+- 只看您關心的資料:可選擇顯示特定類型的物件
+- 調整時間範圍:只看特定時段的活動
+- 簡化檢視:合併重複的操作以減少混亂
 
 ---
 
-## 前置需求 (Prerequisites)
-- Python 3.8 以上版本  
-   *Python 3.8 or later*
-- 支援 ES6 的現代瀏覽器  
-   *Modern browser with ES6 support*
-- 已安裝 `requirements.txt` 列出的套件  
-   *Install dependencies listed in `requirements.txt`*
+## 🚀 如何開始使用
+
+### 第一步:準備環境
+
+1. **確認電腦已安裝 Python**
+   - 需要 Python 3.8 或更新版本
+   - 打開命令提示字元(cmd)或 PowerShell
+   - 輸入 `python --version` 確認版本
+
+2. **安裝必要套件**
+   ```bash
+   pip install -r requirements.txt
+   ```
+   這會自動安裝所有需要的 Python 套件
+
+### 第二步:準備資料
+
+將您的 Process Monitor CSV 日誌檔案轉換成視覺化格式:
+
+```bash
+python unified_viz_data_preparation.py
+```
+
+這個步驟會:
+- 讀取您的日誌檔案
+- 建立圖形關係
+- 產生網頁可以讀取的資料格式
+
+### 第三步:啟動工具
+
+```bash
+python unified_viz_server.py
+```
+
+預設會在 8000 埠啟動,如果想用其他埠號:
+```bash
+python unified_viz_server.py --port 9000
+```
+
+### 第四步:開始使用
+
+1. 打開瀏覽器(建議使用 Chrome、Firefox 或 Edge)
+2. 前往 `http://localhost:8000`
+3. 開始探索您的資料!
 
 ---
 
-## 快速開始 (Quick Start)
-1. 安裝依賴套件  
-    *Install dependencies*
-    ```bash
-    pip install -r requirements.txt
-    ```
-2. 轉換與整理資料  
-    *Prepare visualization data*
-    ```bash
-    python unified_viz_data_preparation.py
-    ```
-3. 啟動本地伺服器  
-    *Start local server*
-    ```bash
-    python unified_viz_server.py (--port 8000 ```Default: 8000```)
-    ```
-4. 開啟瀏覽器：前往 `http://localhost:8000`  
-    *Open browser and visit `http://localhost:8000`*
+## 📋 基本操作說明
+# LogViz – Procmon 事件互動圖形視覺化 (Procmon Event Graph Visualization)
+
+精簡、快速、可探索。LogViz 將 Process Monitor 原始事件轉成「程序 ↔ 檔案 / 登錄 / 網路」互動圖,幫助你用關係結構而不是長表格來理解行為,鎖定可疑活動與攻擊序列。
 
 ---
 
-## 使用指引 (Usage Guide)
-### 載入圖形 (Loading Graphs)
-1. 從下拉選單選擇資料集。  
-2. 點擊「Load Graph」載入圖形。  
-3. 利用「From/To Entry」調整分析範圍。  
-*Select a dataset, click "Load Graph," and adjust entry range to focus the analysis.*
-
-### 導覽與過濾 (Navigation & Filtering)
-- 視窗導覽：使用「Last / Next」遍歷日誌視窗。  
-- 節點類型：勾選顯示程序／檔案／登錄／網路節點。  
-- 信心滑桿：設定序列偵測最低信心值。  
-*Navigate log windows, toggle node types, and tune the confidence slider to refine the graph.*
-
-### 搜尋 (Search)
-- **基本搜尋**：在標頭的搜尋框輸入關鍵字，按 Enter 執行搜尋。  
-  *Use the header search box and press Enter to search.*
-  
-- **進階搜尋模式**：支援多種搜尋模式，可組合使用：  
-  *Advanced search patterns that can be combined:*
-  - **操作搜尋** (Operation): `op:RegRead` 或 `RegWrite`  
-    *Search by operation type*
-  - **登錄路徑** (Registry): `HKLM\System\CurrentControlSet`  
-    *Search by registry path*
-  - **程序搜尋** (Process): `pid:1234` 或 `process:cmd.exe`  
-    *Search by process ID or name*
-  - **類型篩選** (Type): `type:registry` 或 `type:process`  
-    *Filter by node type*
-  - **組合搜尋** (Combined): `RegRead HKLM\Software` 或 `op:RegWrite type:registry`  
-    *Combine multiple patterns*
-
-- **搜尋模式** (Search Modes):  
-  - **高亮模式** (Highlight): 顯示所有節點，符合項目以金色/紅橘色標示  
-    *Show all nodes with matches highlighted in gold/red-orange*
-  - **篩選模式** (Filter): 僅顯示符合的節點與邊  
-    *Show only matching nodes and edges*
-  - 可在側邊欄「Search Options」切換模式  
-    *Toggle mode in sidebar "Search Options"*
-
-- **結果限制**：最多顯示 200 個結果，避免介面過載  
-  *Results limited to 200 items to prevent UI overload*
-  
-- **搜尋幫助**：點擊 ❓ 按鈕查看完整搜尋模式指南  
-  *Click ❓ button for complete search pattern guide*
-  
-- **快捷鍵**：Enter 執行搜尋、Esc 清除搜尋結果  
-  *Shortcuts: Enter to search, Esc to clear*
-
-**搜尋功能說明文件** (Search Documentation):
-- [SEARCH_GUIDE.md](SEARCH_GUIDE.md) - 使用者快速參考指南 / User quick reference guide
-- [SEARCH_IMPLEMENTATION.md](SEARCH_IMPLEMENTATION.md) - 技術實作細節 / Technical implementation details
-- [CODE_ORGANIZATION.md](CODE_ORGANIZATION.md) - 程式碼架構說明 / Code structure guide
-
-### 視覺化選項 (Visualization Options)
-- 序列群組：啟用攻擊序列集合顯示。  
-- REAPr 分析：顯示登錄事件深度資訊。  
-- 物理引擎：切換節點自動排版。  
-- 邊文字：顯示或隱藏操作名稱。  
-- 合併邊：將相同來源／目的與操作的邊合併。  
-*Toggle sequence grouping, REAPr analysis, physics engine, edge labels, or combine identical edges.*
-
-### 鍵盤快捷鍵 (Keyboard Shortcuts)
-- `Ctrl + F`：自動縮放至全圖。  
-- `Space`：切換物理引擎。  
-- `Escape`：關閉細節面板或清除搜尋。  
-- `Ctrl + R`：重新繪製圖形。  
-*Keyboard shortcuts for fit, physics toggle, closing panels, and redraw.*
+## 🔑 核心價值 (Value Proposition)
+- 事件 → 關係圖: 一筆事件 = 一條有向邊,節點語意清晰。
+- 時序/視窗導覽: Entry 範圍與滑動視窗快速重播行為。
+- 進階搜尋語法: `op: / process: / pid: / type:` 與關鍵字組合,自動展開完整因果鏈。
+- 攻擊序列偵測: Sequence pattern + 信心分數標註連續操作行為。
+- REAPr-inspired Registry/行為分析: 標記 root cause / malicious / contaminated 路徑。
+- 高互動性: 節點拖曳、縮放、合併邊、顯示/隱藏類型、快速聚焦。
 
 ---
 
-## 組態調校 (Configuration)
-- `CONFIG.visualization`：調整節點樣式、物理引擎參數與字體。  
-- `CONFIG.nodeColors`：自訂節點色彩與大小。  
-- `CONFIG.apiBaseUrl`：設定資料服務端點（預設 `./unified_viz_data`）。  
-*Customize visualization options, node colors, and API base URLs via `js/config.js`.*
+## 🚀 快速開始 (Quick Start)
+```bash
+pip install -r requirements.txt          # 安裝依賴 / install deps
+python unified_viz_data_preparation.py   # 轉換並產生圖資料 JSON
+python unified_viz_server.py --port 8000 # 啟動伺服器 (預設 8000)
+```
+開瀏覽器 → http://localhost:8000 → 選取資料集 → Load Graph → 探索。
+
+資料尚未生成? 先執行資料準備腳本; 只要 `unified_viz_data/*.json` 存在即可直接載入。
 
 ---
 
-## 資料格式 (Data Format)
-系統預期輸入為 CSV，常用欄位如下：  
-*The tool expects CSV input with the following fields:*  
-- `Process Name`（程序名稱）  
-- `PID`（程序 ID）  
-- `Operation`（操作類型）  
-- `Path`（檔案／登錄／網路路徑）  
-- `Result`（SUCCESS/FAILURE 等結果）  
-- `Date & Time`（時間戳記）  
-- `Event Class`、`User`、`Command Line` 等補充欄位。  
+## ✨ 主要功能 (Features)
+- 互動式 vis-network 圖形 (拖曳 / 縮放 / 重新定位)。
+- 四類節點: Process / File / Registry / Network (色彩區分)。
+- Entry 範圍 & 滑動視窗 (時間/序列瀏覽)。
+- Combine Edges 合併相同操作,降噪提升可讀性。
+- 進階搜尋 + 高亮或篩選模式 (Highlight / Filter)。
+- Sequence Patterns: 偵測常見行為鏈 (Process Create, File Write, Registry 修改, TCP 交換)。
+- REAPr 風格攻擊路徑標註 (root cause / malicious / contaminated / impact)。
+- 統計面板: 節點數 / 邊數 / 時間範圍 / 可用特徵。
 
 ---
 
-## 架構概覽 (Architecture)
-### 前端模組 (Frontend Modules)
-- `js/app.js`：應用程式進入點與事件協調。  
-- `js/modules/visualization.js`：視覺化與互動控制。  
-- `js/modules/graph-loader.js`：讀取與快取圖形資料。  
-- `js/modules/filters.js`：篩選邏輯與邊／節點過濾。  
-- `js/modules/search.js`：節點與邊搜尋索引。  
-- `js/modules/notifications.js`：通知與狀態列管理。  
-*Modularized JavaScript architecture keeps responsibilities well separated.*
+## 🔍 搜尋語法 (Search Syntax)
+| 類型 | 語法 | 範例 |
+| ---- | ---- | ---- |
+| 操作 | `op:<Operation>` | `op:RegRead`, `op:CreateFile` |
+| 程序 | `process:<name>` / `pid:<id>` | `process:powershell`, `pid:3420` |
+| 類型 | `type:<process|file|registry|network>` | `type:registry` |
+| 關鍵字 | 任意字串模糊比對 | `HKLM\Software`, `System32` |
+| 組合 | 多條件並列 | `process:powershell op:CreateFile type:file` |
 
-### 後端元件 (Backend Components)
-- `unified_viz_server.py`：提供靜態資源與 API 的 HTTP 伺服器。  
-- `unified_viz_data_preparation.py`：將原始圖資料轉為前端使用的 JSON。  
-- `graphutil.py`：圖形分析、序列偵測與 REAPr 工具集。  
-*Python scripts handle data preparation and lightweight serving.*
+模式: Highlight (顯示全部並標亮) / Filter (僅顯示符合)。結果上限 200 筆避免負載。Esc 清除, Enter 執行。
 
 ---
 
-## 分析功能 (Analysis Features)
-- **攻擊序列偵測**：辨識程序建立、檔案操作、登錄異常與網路行為。  
-- **REAPr 登錄檢視**：快速定位可能的持久化或組態異動。  
-- **統計面板**：節點／邊數量、日誌筆數、時間範圍即時顯示。  
-*Detect attack sequences, inspect registry activities, and review live metrics.*
+## 🧪 攻擊序列 (Sequence Detection)
+內建 `SequencePattern` 定義 (於 `graphutil.py`):
+- Process_Creation
+- File_Creation_Write / File_Creation_Metadata_Write
+- Registry_Creation_Modification / Registry_Modification
+- TCP_Communication
 
----
-
-## 自訂化 (Customization)
-- 編輯 `css/styles.css` 調整配色、排版與響應式行為。  
-- 修改 `graphutil.py` 內的 `SequencePattern` 新增或調整攻擊樣式。  
-*Customize styles and extend attack pattern definitions as needed.*
-
-範例：  
-*Example:*  
+每組比對提供: pattern 名稱, matched operations, confidence (依覆蓋率與順序)。
+可自行新增:
 ```python
 SequencePattern(
-      name="Custom_Pattern",
-      operations=["Operation1", "Operation2"],
-      color="#FF0000",
-      description="Custom attack pattern",
-      min_length=2,
-      strict_order=True,
-      results=["SUCCESS", "SUCCESS"]
+  name="Custom_Pattern",
+  operations=["Op1","Op2"],
+  color="#FF0000",
+  description="My pattern",
+  min_length=2,
+  strict_order=True,
+  results=["SUCCESS","SUCCESS"]
 )
 ```
 
 ---
 
-## 疑難排解 (Troubleshooting)
-- **效能問題**：減少顯示的日誌範圍、關閉物理引擎或合併多餘邊。  
-   *Reduce entry range, disable physics, or combine redundant edges to improve performance.*
-- **資料讀取異常**：確認 CSV 格式正確、檔案權限與資料夾結構。  
-   *Verify CSV format, file permissions, and directory structure.*
-- **瀏覽器相容性**：建議使用 Chrome 70+、Firefox 65+、Safari 12+。  
-   *Recommended browsers: Chrome 70+, Firefox 65+, Safari 12+.*
+## 🛠 REAPr 風格標註 (REAPr-style Tagging)
+若提供 Caldera / REAPr 預測檔 (line_id + 分類) 會標記:
+- ROOT_CAUSE: 起始惡意程序
+- MALICIOUS / IMPACT: 關鍵影響節點
+- CONTAMINATED: 傳染路徑節點
+攻擊路徑 = forward contam ∩ backward trace。
+
 ---
+
+## 📦 資料準備 (Data Preparation)
+輸入: 已轉成 pickle + metadata JSON 的圖 (`Graphs/*.pkl` + `*_edge_metadata.json`)
+腳本: `unified_viz_data_preparation.py`
+輸出: `unified_viz_data/<graph_id>.json` + `metadata_index.json`
+節點/邊結構: 
+- nodes: id, label, type, pid
+- edges: src, dst, operation, timestamp, entry_index, metadata (technique 等)
+
+---
+
+## ⚙️ 組態 (Config Hints)
+調整 `js/` 下 config / 模組: 顯示顏色、API base、物理引擎、搜尋模式。
+自訂樣式: `css/`；Pattern 擴充: `graphutil.py`。
+
+---
+
+## 🧭 使用流程 (Suggested Flow)
+1. 產生 JSON → 啟動伺服器。
+2. 先載入前 100~200 entries 觀察結構。
+3. 用搜尋聚焦 (例如 `op:RegSetValue Run` / `process:powershell`).
+4. 開啟 Sequence / REAPr 選項鎖定行為鏈。
+5. 滑動視窗重播行為,確認時間序列。
+
+---
+
+## 🩺 疑難排解 (Troubleshooting)
+| 問題 | 解決 |
+| ---- | ---- |
+| Graph 很慢 | 降低 entries, 關閉 Physics, 勾選 Combine Edges |
+| 搜不到資料 | 清除搜尋 / 放大 Entry 範圍 / 確認類型未被隱藏 |
+| 資料未載入 | 確認 `unified_viz_data/*.json` 是否存在, 重新執行準備腳本 |
+| 顏色/樣式不符 | 檢查 `css/` 與 JS 模組快取 (硬重新整理) |
+
+---
+
+## 🏗 架構 (Architecture Snapshot)
+Backend: `unified_viz_server.py` (靜態 + JSON) / `unified_viz_data_preparation.py` (轉換) / `graphutil.py` (patterns + 分析)
+Frontend: `index.html` + `js/` 模組 (載入 / 搜尋 / 過濾 / 畫圖) + vis-network
+
+---
+
+## 🤝 貢獻 (Contributing)
+歡迎提出 Issue / PR: 可聚焦於
+- 更精準的 sequence patterns
+- 效能 (虛擬化 / 邊抽樣 / WebGL)
+- REAPr 標註擴充 (加權信心)
+- 搜尋語法擴充 (邏輯運算符, 時間範圍)
+
+---
+
+## 📜 授權 (License)
+MIT (若未附上授權, 建議新增 LICENSE 檔案)。
+
+---
+
+## ✅ 摘要 (At a Glance)
+| 類別 | 內容 |
+| ---- | ---- |
+| 目的 | Procmon 原始事件 → 互動圖形關係分析 |
+| 支援節點 | Process / File / Registry / Network |
+| 進階 | Sequence Patterns, REAPr-style 標註 |
+| 搜尋 | `op:` `process:` `pid:` `type:` + 關鍵字組合 |
+| 效能建議 | 先載入 100~200 entries; Combine Edges; 關閉 Physics |
+| 可擴充 | 自訂 pattern / 樣式 / 搜尋語法 |
+
+---
+
+若需完整詳細原始長版文件,請參考歷史版本或建立 `DOCS/` 補充。
+
+Enjoy hunting. 🔍

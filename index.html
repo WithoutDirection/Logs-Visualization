@@ -5,19 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Unified Log Entry Visualization Tool for analyzing security event graphs">
     <title>Unified Log Entry Visualization Tool</title>
-        
-        <!-- Status bar -->
-        <footer class="status" role="contentinfo">
-            <div class="status-left">
-                <span id="status-text" role="status" aria-live="polite">Ready - Select a graph to begin</span>
-            </div>
-            <div class="status-right">
-                <span id="performance-text" aria-label="Performance metrics">Performance: -</span>
-                <span id="memory-text" aria-label="Memory usage">Memory: -</span>
-                <span id="filter-text" aria-label="Active filters">Filters: None</span>
-            </div>
-        </footer>
-    </div>sualization Tool</title>
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -211,12 +198,6 @@
                             Combine Same Operations
                         </label>
                         <span id="combine-edges-help" class="sr-only">Combine multiple identical operations into single edges with counts</span>
-                        
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="search-filter-mode" aria-describedby="search-filter-mode-help" title="When enabled, only matching nodes/edges are shown. When disabled, all nodes are shown but matches are highlighted.">
-                            Search Filter Mode
-                        </label>
-                        <span id="search-filter-mode-help" class="sr-only">Toggle between highlighting matches or showing only matching results</span>
                     </div>
                 </fieldset>
             </section>
@@ -391,7 +372,6 @@
                     <li><strong>Complete Events:</strong> When a match is found, the entire raw event (including related nodes and edges) is displayed</li>
                     <li><strong>Range Override:</strong> Entry range filters are ignored during search to show all results</li>
                     <li><strong>Result Limit:</strong> Maximum 500 results displayed to maintain performance</li>
-                    <li><strong>Filter Mode:</strong> Enable "Search Filter Mode" in Layout Options to show only matching results</li>
                 </ul>
 
                 <h3>⌨️ Shortcuts</h3>

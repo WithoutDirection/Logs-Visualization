@@ -61,7 +61,7 @@ select:focus {
         "sidebar main details"
         "status status status";
     grid-template-columns: 320px 1fr var(--details-width);
-    grid-template-rows: 70px 1fr 35px;
+    grid-template-rows: auto 1fr 35px;
     height: 100vh;
     transition: grid-template-columns 0.3s ease-in-out;
 }
@@ -75,12 +75,13 @@ select:focus {
     grid-area: header;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 10px 20px;
+    padding: 15px 20px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     box-shadow: 0 3px 10px rgba(0,0,0,0.2);
     z-index: 100;
+    min-height: fit-content;
 }
 
 .header-row {
