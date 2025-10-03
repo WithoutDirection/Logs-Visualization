@@ -27,22 +27,36 @@ class DataFilters {
     /**
      * Apply all filters to raw data
      * @param {Object} data - Raw graph data
+     * @param {Array<number>} searchEntryIndices - Entry indices from search (if search active)
      * @returns {Object} Filtered data
      */
-    applyFilters(data) {
+    applyFilters(data, searchEntryIndices = null) {
         if (!data) return null;
 
-        const startEntry = DOMHelper.getIntValueById('entry-start', 1);
-        const endEntry = DOMHelper.getIntValueById('entry-end', data.total_entries);
         const showSequenceGrouping = DOMHelper.isChecked('sequence-grouping');
         const showReapr = DOMHelper.isChecked('reapr-analysis');
         const confidenceThreshold = DOMHelper.getIntValueById('confidence-slider', 50) / 100;
         const combineEdges = DOMHelper.isChecked('combine-edges');
 
-        // Filter edges by entry range
-        let filteredEdges = data.edges.filter(edge => 
-            edge.entry_index >= startEntry && edge.entry_index <= endEntry
-        );
+        let filteredEdges;
+        let entryRange;
+
+        // If search is active, use search entry indices instead of range
+        if (searchEntryIndices && searchEntryIndices.length > 0) {
+            const entrySet = new Set(searchEntryIndices);
+            filteredEdges = data.edges.filter(edge => 
+                entrySet.has(edge.entry_index)
+            );
+            entryRange = [Math.min(...searchEntryIndices), Math.max(...searchEntryIndices)];
+        } else {
+            // Normal range filtering
+            const startEntry = DOMHelper.getIntValueById('entry-start', 1);
+            const endEntry = DOMHelper.getIntValueById('entry-end', data.total_entries);
+            filteredEdges = data.edges.filter(edge => 
+                edge.entry_index >= startEntry && edge.entry_index <= endEntry
+            );
+            entryRange = [startEntry, endEntry];
+        }
 
         // Apply edge combination if enabled
         if (combineEdges) {
@@ -73,7 +87,8 @@ class DataFilters {
             nodes: filteredNodes,
             edges: filteredEdges,
             filters_applied: {
-                entry_range: [startEntry, endEntry],
+                entry_range: entryRange,
+                search_active: searchEntryIndices !== null && searchEntryIndices.length > 0,
                 sequence_grouping: showSequenceGrouping,
                 reapr_analysis: showReapr,
                 confidence_threshold: confidenceThreshold,
