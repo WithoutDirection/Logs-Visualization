@@ -82,10 +82,21 @@ class DataFilters {
             involvedNodeIds.has(node.id) && nodeTypeFilters[node.type]
         );
 
+        // Filter sequence groups based on confidence threshold if sequence grouping is enabled
+        let filteredSequenceGroups = data.sequence_groups || {};
+        if (showSequenceGrouping && Object.keys(filteredSequenceGroups).length > 0) {
+            filteredSequenceGroups = Object.fromEntries(
+                Object.entries(filteredSequenceGroups).filter(([groupId, group]) => 
+                    group.confidence >= confidenceThreshold
+                )
+            );
+        }
+
         return {
             ...data,
             nodes: filteredNodes,
             edges: filteredEdges,
+            sequence_groups: filteredSequenceGroups,
             filters_applied: {
                 entry_range: entryRange,
                 search_active: searchEntryIndices !== null && searchEntryIndices.length > 0,

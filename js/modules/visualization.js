@@ -13,6 +13,7 @@ class Visualization {
         this.network = null;
         this.selectedNodes = new Set();
         this.registryPathMapping = {};
+        this.currentData = null; // Store current data for sequence group coloring
     }
 
     /**
@@ -21,6 +22,9 @@ class Visualization {
      */
     async createNetworkVisualization(data) {
         if (!data) return;
+
+        // Store current data for sequence group coloring
+        this.currentData = data;
 
         const container = DOMHelper.getElementById('graph-container');
         if (!container) return;
@@ -45,6 +49,18 @@ class Visualization {
                 this.registryPathMapping = createRegistryPathMapping(data.nodes);
             } else {
                 this.registryPathMapping = {};
+            }
+
+            // Debug: Log sequence group information
+            const sequenceGroupCount = Object.keys(data.sequence_groups || {}).length;
+            if (sequenceGroupCount > 0) {
+                console.log(`Processing ${sequenceGroupCount} sequence groups for visualization`);
+                console.log('Sequence groups:', data.sequence_groups);
+                
+                // Log a sample of edges to see their structure
+                console.log('Sample edges structure:', data.edges.slice(0, 3));
+            } else {
+                console.log('No sequence groups found in data');
             }
 
             // Prepare nodes for vis.js with progressive processing
@@ -197,7 +213,7 @@ class Visualization {
                 to: edge.dst,
                 label: label,
                 title: this.createEdgeTooltip(edge),
-                color: this.getEdgeColor(edge),
+                color: this.getEdgeColor(edge, this.currentData),
                 width: this.getEdgeWidth(edge),
                 arrows: 'to'
             };
@@ -457,39 +473,70 @@ class Visualization {
      * @returns {string} Color value
      */
     getEdgeColor(edge, data) {
-        if (DOMHelper.isChecked('sequence-grouping')) {
+        // Check if sequence grouping is enabled
+        const sequenceGroupingEnabled = DOMHelper.isChecked('sequence-grouping');
+        
+        // Debug logging
+        console.log('getEdgeColor called:', {
+            sequenceGroupingEnabled,
+            edgeId: `${edge.src}-${edge.dst}-${edge.key}`,
+            hasSequenceGroups: data && data.sequence_groups && Object.keys(data.sequence_groups).length > 0,
+            sequenceGroupCount: data && data.sequence_groups ? Object.keys(data.sequence_groups).length : 0
+        });
+        
+        if (sequenceGroupingEnabled) {
+            // First check if edge already has a sequence color assigned
             if (edge.sequence_color) {
+                console.log('Using pre-assigned sequence color:', edge.sequence_color);
                 return edge.sequence_color;
             }
             
+            // Look for the edge in sequence groups
             if (data && data.sequence_groups) {
                 for (const [groupId, group] of Object.entries(data.sequence_groups)) {
                     if (edge.is_combined) {
-                        const hasSequenceEdge = edge.original_edges.some(originalEdge => {
+                        // For combined edges, check if any original edge matches
+                        const hasSequenceEdge = edge.original_edges && edge.original_edges.some(originalEdge => {
                             return group.edges.some(([src, dst, key]) => 
                                 src === originalEdge.src && 
                                 dst === originalEdge.dst && 
-                                key == originalEdge.key
+                                String(key) === String(originalEdge.key) // Convert both to strings for comparison
                             );
                         });
                         if (hasSequenceEdge) {
+                            console.log(`Found sequence match for combined edge in group ${groupId}:`, group.pattern_color);
                             return group.pattern_color;
                         }
                     } else {
-                        const isInGroup = group.edges.some(([src, dst, key]) => 
-                            src === edge.src && 
-                            dst === edge.dst && 
-                            key == edge.key
-                        );
+                        // For single edges, check direct match
+                        const isInGroup = group.edges.some(([src, dst, key]) => {
+                            const edgeMatches = src === edge.src && 
+                                              dst === edge.dst && 
+                                              String(key) === String(edge.key); // Convert both to strings for comparison
+                            
+                            if (edgeMatches) {
+                                console.log(`Exact match found: [${src}, ${dst}, ${key}] matches edge [${edge.src}, ${edge.dst}, ${edge.key}]`);
+                            }
+                            
+                            return edgeMatches;
+                        });
                         if (isInGroup) {
+                            console.log(`Found sequence match for edge in group ${groupId}:`, group.pattern_color);
                             return group.pattern_color;
                         }
                     }
                 }
+                console.log('No sequence group match found for edge');
+            } else {
+                console.log('No sequence groups available in data');
             }
+        } else {
+            console.log('Sequence grouping disabled');
         }
         
-        return '#848484'; // Default gray
+        // Default gray color when sequence grouping is disabled or edge is not in any group
+        console.log('Using default gray color');
+        return '#848484';
     }
 
     /**
@@ -1279,6 +1326,7 @@ class Visualization {
         }
         this.selectedNodes.clear();
         this.registryPathMapping = {};
+        this.currentData = null;
     }
 }
 

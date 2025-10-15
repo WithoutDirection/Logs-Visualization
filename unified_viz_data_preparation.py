@@ -26,11 +26,11 @@ from tqdm import tqdm
 
 # Import existing functions from the notebook
 try:
-    # from graphutil import find_sequence_groups, ATTACK_SEQUENCE_PATTERNS
-    from graphutil import find_sequence_groups
-    ATTACK_SEQUENCE_PATTERNS = []
-except ImportError:
-    print("Could not import graphutil. Ensure graphutil.py is in the same directory.")
+    from graphutil import find_sequence_groups, ATTACK_SEQUENCE_PATTERNS
+    print(f"✅ Successfully imported graphutil functions. Found {len(ATTACK_SEQUENCE_PATTERNS)} attack sequence patterns.")
+except ImportError as e:
+    print(f"❌ Could not import graphutil: {e}")
+    
 
 class UnifiedVisualizationDataPreparator:
     """
