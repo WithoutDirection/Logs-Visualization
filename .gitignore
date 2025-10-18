@@ -54,3 +54,7 @@ Thumbs.db
 *.temp
 *.log
 *.backup
+
+# Database files
+*.sqlite3
+*.db

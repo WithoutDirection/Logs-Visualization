@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,8 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Unified Log Entry Visualization Tool for analyzing security event graphs">
     <title>Unified Log Entry Visualization Tool</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -300,7 +302,7 @@
                 <span id="filter-text">Filters: None</span>
             </div>
         </div>
-    </header>
+    </div>
 
     <!-- Legend -->
     <div class="legend" id="legend" role="region" aria-label="Sequence Patterns Legend">
@@ -384,6 +386,6 @@
         </div>
     </div>
 
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="{% static 'js/app.js' %}?v=7"></script>
 </body>
 </html>
