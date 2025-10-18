@@ -36,8 +36,7 @@ export const CONFIG = {
             }
         },
         nodes: {
-            defaultSize: 20,
-            processSize: 25,
+            size: 20,
             font: {
                 size: 12,
                 color: '#000000',
@@ -48,8 +47,13 @@ export const CONFIG = {
             borderWidth: 2,
             borderWidthSelected: 3
         },
+        // Custom size settings (not part of vis.js options)
+        customNodeSizes: {
+            defaultSize: 20,
+            processSize: 25
+        },
         edges: {
-            defaultWidth: 2,
+            width: 2,
             font: {
                 size: 10,
                 face: 'Segoe UI',
@@ -61,6 +65,10 @@ export const CONFIG = {
                 type: 'curvedCW',
                 roundness: 0.2
             }
+        },
+        // Custom edge width settings (not part of vis.js options)
+        customEdgeWidths: {
+            defaultWidth: 2
         }
     },
     

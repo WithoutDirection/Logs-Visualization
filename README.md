@@ -1,92 +1,10 @@
-# LogViz - 日誌視覺化工具
-
-一個幫助您快速理解和分析電腦行為記錄的視覺化工具。將複雜的系統日誌轉換成互動式的圖形,讓您能夠輕鬆找出可疑活動。
-
----
-
-## 📖 這個工具能做什麼?
-
-LogViz 能將電腦系統的操作記錄(Process Monitor 日誌)轉換成視覺化的網路圖。圖形中的**圓點**代表不同的物件(程式、檔案、登錄、網路連線),**箭頭**表示它們之間的操作關係。
-
-### 主要功能
-
-✨ **互動式圖形**
-- 用滑鼠拖曳、縮放來查看整個關係網路
-- 點擊圓點或箭頭可看到詳細資訊
-- 不同顏色代表不同類型的物件(綠色=程式、紫色=檔案、藍色=登錄、黃色=網路)
-
-🔍 **強大的搜尋功能**
-- 快速找出特定操作(例如:檔案寫入、登錄讀取)
-- 搜尋特定程式或檔案路徑
-- 搜尋結果會自動展開完整的相關路徑
-
-📊 **即時統計資訊**
-- 顯示當前有多少圓點(節點)和箭頭(關聯)
-- 顯示時間範圍和日誌筆數
-- 幫助您掌握資料的整體狀況
-
-🎯 **聰明的篩選**
-- 只看您關心的資料:可選擇顯示特定類型的物件
-- 調整時間範圍:只看特定時段的活動
-- 簡化檢視:合併重複的操作以減少混亂
-
----
-
-## 🚀 如何開始使用
-
-### 第一步:準備環境
-
-1. **確認電腦已安裝 Python**
-   - 需要 Python 3.8 或更新版本
-   - 打開命令提示字元(cmd)或 PowerShell
-   - 輸入 `python --version` 確認版本
-
-2. **安裝必要套件**
-   ```bash
-   pip install -r requirements.txt
-   ```
-   這會自動安裝所有需要的 Python 套件
-
-### 第二步:準備資料
-
-將您的 Process Monitor CSV 日誌檔案轉換成視覺化格式:
-
-```bash
-python unified_viz_data_preparation.py
-```
-
-這個步驟會:
-- 讀取您的日誌檔案
-- 建立圖形關係
-- 產生網頁可以讀取的資料格式
-
-### 第三步:啟動工具
-
-```bash
-python unified_viz_server.py
-```
-
-預設會在 8000 埠啟動,如果想用其他埠號:
-```bash
-python unified_viz_server.py --port 9000
-```
-
-### 第四步:開始使用
-
-1. 打開瀏覽器(建議使用 Chrome、Firefox 或 Edge)
-2. 前往 `http://localhost:8000`
-3. 開始探索您的資料!
-
----
-
-## 📋 基本操作說明
 # LogViz – Procmon 事件互動圖形視覺化 (Procmon Event Graph Visualization)
 
 精簡、快速、可探索。LogViz 將 Process Monitor 原始事件轉成「程序 ↔ 檔案 / 登錄 / 網路」互動圖,幫助你用關係結構而不是長表格來理解行為,鎖定可疑活動與攻擊序列。
 
 ---
 
-## 🔑 核心價值 (Value Proposition)
+##  核心價值 (Value Proposition)
 - 事件 → 關係圖: 一筆事件 = 一條有向邊,節點語意清晰。
 - 時序/視窗導覽: Entry 範圍與滑動視窗快速重播行為。
 - 進階搜尋語法: `op: / process: / pid: / type:` 與關鍵字組合,自動展開完整因果鏈。
@@ -96,7 +14,7 @@ python unified_viz_server.py --port 9000
 
 ---
 
-## 🚀 快速開始 (Quick Start)
+##  快速開始 (Quick Start)
 ```bash
 pip install -r requirements.txt          # 安裝依賴 / install deps
 python unified_viz_data_preparation.py   # 轉換並產生圖資料 JSON
@@ -108,7 +26,7 @@ python unified_viz_server.py --port 8000 # 啟動伺服器 (預設 8000)
 
 ---
 
-## ✨ 主要功能 (Features)
+##  主要功能 (Features)
 - 互動式 vis-network 圖形 (拖曳 / 縮放 / 重新定位)。
 - 四類節點: Process / File / Registry / Network (色彩區分)。
 - Entry 範圍 & 滑動視窗 (時間/序列瀏覽)。
@@ -120,7 +38,7 @@ python unified_viz_server.py --port 8000 # 啟動伺服器 (預設 8000)
 
 ---
 
-## 🔍 搜尋語法 (Search Syntax)
+##  搜尋語法 (Search Syntax)
 | 類型 | 語法 | 範例 |
 | ---- | ---- | ---- |
 | 操作 | `op:<Operation>` | `op:RegRead`, `op:CreateFile` |
@@ -133,7 +51,7 @@ python unified_viz_server.py --port 8000 # 啟動伺服器 (預設 8000)
 
 ---
 
-## 🧪 攻擊序列 (Sequence Detection)
+##  攻擊序列 (Sequence Detection)
 內建 `SequencePattern` 定義 (於 `graphutil.py`):
 - Process_Creation
 - File_Creation_Write / File_Creation_Metadata_Write
@@ -165,7 +83,7 @@ SequencePattern(
 
 ---
 
-## 📦 資料準備 (Data Preparation)
+##  資料準備 (Data Preparation)
 輸入: 已轉成 pickle + metadata JSON 的圖 (`Graphs/*.pkl` + `*_edge_metadata.json`)
 腳本: `unified_viz_data_preparation.py`
 輸出: `unified_viz_data/<graph_id>.json` + `metadata_index.json`
@@ -175,13 +93,13 @@ SequencePattern(
 
 ---
 
-## ⚙️ 組態 (Config Hints)
+##  組態 (Config Hints)
 調整 `js/` 下 config / 模組: 顯示顏色、API base、物理引擎、搜尋模式。
 自訂樣式: `css/`；Pattern 擴充: `graphutil.py`。
 
 ---
 
-## 🧭 使用流程 (Suggested Flow)
+##  使用流程 (Suggested Flow)
 1. 產生 JSON → 啟動伺服器。
 2. 先載入前 100~200 entries 觀察結構。
 3. 用搜尋聚焦 (例如 `op:RegSetValue Run` / `process:powershell`).
@@ -190,7 +108,7 @@ SequencePattern(
 
 ---
 
-## 🩺 疑難排解 (Troubleshooting)
+##  疑難排解 (Troubleshooting)
 | 問題 | 解決 |
 | ---- | ---- |
 | Graph 很慢 | 降低 entries, 關閉 Physics, 勾選 Combine Edges |
@@ -206,19 +124,6 @@ Frontend: `index.html` + `js/` 模組 (載入 / 搜尋 / 過濾 / 畫圖) + vis-
 
 ---
 
-## 🤝 貢獻 (Contributing)
-歡迎提出 Issue / PR: 可聚焦於
-- 更精準的 sequence patterns
-- 效能 (虛擬化 / 邊抽樣 / WebGL)
-- REAPr 標註擴充 (加權信心)
-- 搜尋語法擴充 (邏輯運算符, 時間範圍)
-
----
-
-## 📜 授權 (License)
-MIT (若未附上授權, 建議新增 LICENSE 檔案)。
-
----
 
 ## ✅ 摘要 (At a Glance)
 | 類別 | 內容 |
@@ -231,7 +136,3 @@ MIT (若未附上授權, 建議新增 LICENSE 檔案)。
 | 可擴充 | 自訂 pattern / 樣式 / 搜尋語法 |
 
 ---
-
-若需完整詳細原始長版文件,請參考歷史版本或建立 `DOCS/` 補充。
-
-Enjoy hunting. 🔍

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Frontend Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>LogViz API Frontend Test</h1>
+    
+    <div class="test-section info">
+        <h3>Test Controls</h3>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="testDatasets()">Test Datasets API</button>
+        <button onclick="testGraphs()">Test Graphs API</button>
+        <button onclick="testNodes()">Test Nodes API</button>
+        <button onclick="testEdges()">Test Edges API</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:8000/api';
+        let currentDatasetId = null;
+        let currentGraphId = null;
+
+        function addResult(title, status, content) {
+            const resultsDiv = document.getElementById('results');
+            const section = document.createElement('div');
+            section.className = `test-section ${status}`;
+            section.innerHTML = `
+                <h3>${title}</h3>
+                <pre>${JSON.stringify(content, null, 2)}</pre>
+            `;
+            resultsDiv.appendChild(section);
+        }
+
+        async function testDatasets() {
+            try {
+                const response = await fetch(`${API_BASE}/datasets/`);
+                const data = await response.json();
+                
+                if (data.results && data.results.length > 0) {
+                    currentDatasetId = data.results[0].id;
+                    addResult('✅ Datasets API', 'success', {
+                        count: data.count,
+                        firstDataset: data.results[0]
+                    });
+                    return true;
+                } else {
+                    addResult('⚠️ Datasets API', 'error', 'No datasets found');
+                    return false;
+                }
+            } catch (error) {
+                addResult('❌ Datasets API Failed', 'error', error.message);
+                return false;
+            }
+        }
+
+        async function testGraphs() {
+            if (!currentDatasetId) {
+                addResult('⚠️ Graphs API', 'error', 'No dataset selected. Run datasets test first.');
+                return false;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/datasets/${currentDatasetId}/graphs/`);
+                const data = await response.json();
+                
+                if (data.results && data.results.length > 0) {
+                    currentGraphId = data.results[0].id;
+                    addResult('✅ Graphs API', 'success', {
+                        graphId: currentGraphId,
+                        nodeCount: data.results[0].node_count,
+                        edgeCount: data.results[0].edge_count,
+                        availableFeatures: data.results[0].available_features
+                    });
+                    return true;
+                } else if (data.length > 0) {
+                    currentGraphId = data[0].id;
+                    addResult('✅ Graphs API', 'success', {
+                        graphId: currentGraphId,
+                        nodeCount: data[0].node_count,
+                        edgeCount: data[0].edge_count
+                    });
+                    return true;
+                } else {
+                    addResult('⚠️ Graphs API', 'error', 'No graphs found');
+                    return false;
+                }
+            } catch (error) {
+                addResult('❌ Graphs API Failed', 'error', error.message);
+                return false;
+            }
+        }
+
+        async function testNodes() {
+            if (!currentGraphId) {
+                addResult('⚠️ Nodes API', 'error', 'No graph selected. Run graphs test first.');
+                return false;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/nodes/?graph=${currentGraphId}`);
+                const data = await response.json();
+                
+                const nodes = data.results || data;
+                if (nodes.length > 0) {
+                    addResult('✅ Nodes API', 'success', {
+                        count: data.count || nodes.length,
+                        firstNode: nodes[0],
+                        hasId: nodes[0].hasOwnProperty('id'),
+                        idType: typeof nodes[0].id
+                    });
+                    return true;
+                } else {
+                    addResult('⚠️ Nodes API', 'error', 'No nodes found');
+                    return false;
+                }
+            } catch (error) {
+                addResult('❌ Nodes API Failed', 'error', error.message);
+                return false;
+            }
+        }
+
+        async function testEdges() {
+            if (!currentGraphId) {
+                addResult('⚠️ Edges API', 'error', 'No graph selected. Run graphs test first.');
+                return false;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/edges/?graph=${currentGraphId}&from_entry=1&to_entry=10`);
+                const data = await response.json();
+                
+                const edges = data.results || data;
+                if (edges.length > 0) {
+                    const firstEdge = edges[0];
+                    
+                    // Check critical fields
+                    const hasSrc = firstEdge.hasOwnProperty('src');
+                    const hasDst = firstEdge.hasOwnProperty('dst');
+                    const srcType = typeof firstEdge.src;
+                    const dstType = typeof firstEdge.dst;
+                    
+                    const status = (hasSrc && hasDst && srcType === 'number' && dstType === 'number') 
+                        ? 'success' : 'error';
+                    
+                    addResult(`${status === 'success' ? '✅' : '❌'} Edges API`, status, {
+                        count: data.count || edges.length,
+                        firstEdge: firstEdge,
+                        validation: {
+                            hasSrc,
+                            hasDst,
+                            srcType,
+                            dstType,
+                            canCallToString: hasSrc && firstEdge.src !== undefined
+                        }
+                    });
+                    return status === 'success';
+                } else {
+                    addResult('⚠️ Edges API', 'error', 'No edges found');
+                    return false;
+                }
+            } catch (error) {
+                addResult('❌ Edges API Failed', 'error', error.message);
+                return false;
+            }
+        }
+
+        async function runAllTests() {
+            document.getElementById('results').innerHTML = '';
+            
+            const datasetsOk = await testDatasets();
+            if (!datasetsOk) return;
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const graphsOk = await testGraphs();
+            if (!graphsOk) return;
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await testNodes();
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await testEdges();
+            
+            addResult('✅ All Tests Completed', 'success', {
+                message: 'Check results above for any errors'
+            });
+        }
+
+        // Auto-run on load
+        window.addEventListener('load', () => {
+            setTimeout(runAllTests, 500);
+        });
+    </script>
+</body>
+</html>
