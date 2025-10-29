@@ -15,6 +15,33 @@ class GraphLoader {
     }
 
     /**
+     * Fetch all paginated results from a DRF endpoint.
+     * Supports both paginated (results/next) and non-paginated arrays.
+     * @param {string} url - Initial URL to fetch
+     * @returns {Promise<Array>} Aggregated results
+     */
+    async fetchAllResults(url) {
+        const all = [];
+        let nextUrl = url;
+        while (nextUrl) {
+            const resp = await fetch(nextUrl);
+            if (!resp.ok) {
+                throw new Error(`Failed to fetch: ${resp.status} ${nextUrl}`);
+            }
+            const data = await resp.json();
+            if (Array.isArray(data)) {
+                all.push(...data);
+                nextUrl = null;
+            } else {
+                const results = data.results || [];
+                all.push(...results);
+                nextUrl = data.next || null;
+            }
+        }
+        return all;
+    }
+
+    /**
      * Load available datasets from Django API
      * @returns {Promise<Array>} List of datasets
      */
@@ -93,45 +120,58 @@ class GraphLoader {
                 throw new Error(`Failed to load graph info: ${graphResponse.status}`);
             }
             const graphs = await graphResponse.json();
-            const graphId = graphs.results?.[0]?.id || graphs[0]?.id;
+            const graphObj = graphs.results?.[0] || graphs[0];
+            const graphId = graphObj?.id;
             
             if (!graphId) {
                 throw new Error('No graph found for this dataset');
             }
             
-            // Load nodes and edges concurrently
-            const [nodesResponse, edgesResponse] = await Promise.all([
-                fetch(`${CONFIG.apiBaseUrl}/nodes/?graph=${graphId}&from_entry=${fromEntry}&to_entry=${toEntry}`),
-                fetch(`${CONFIG.apiBaseUrl}/edges/?graph=${graphId}&from_entry=${fromEntry}&to_entry=${toEntry}`)
+            // Load nodes and edges with pagination support
+            const nodesUrl = `${CONFIG.apiBaseUrl}/nodes/?graph=${graphId}&from_entry=${fromEntry}&to_entry=${toEntry}`;
+            const edgesUrl = `${CONFIG.apiBaseUrl}/edges/?graph=${graphId}&from_entry=${fromEntry}&to_entry=${toEntry}`;
+
+            const [nodesList, edgesList] = await Promise.all([
+                this.fetchAllResults(nodesUrl),
+                this.fetchAllResults(edgesUrl)
             ]);
             
-            if (!nodesResponse.ok) {
-                throw new Error(`Failed to load nodes: ${nodesResponse.status}`);
-            }
-            if (!edgesResponse.ok) {
-                throw new Error(`Failed to load edges: ${edgesResponse.status}`);
-            }
-            
-            const nodesData = await nodesResponse.json();
-            const edgesData = await edgesResponse.json();
-            
             // Map Django data to expected format
+            const totalEntriesFromGraph = Number(graphObj?.entry_count);
+            const hasValidTotalEntries = Number.isFinite(totalEntriesFromGraph) && totalEntriesFromGraph > 0;
+
             this.currentData = {
                 graph_id: graphId,
                 dataset_id: datasetId,
-                nodes: this.mapNodes(nodesData.results || nodesData),
-                edges: this.mapEdges(edgesData.results || edgesData),
+                nodes: this.mapNodes(nodesList),
+                edges: this.mapEdges(edgesList),
                 sequence_groups: {},  // Will be loaded separately if needed
                 malicious_specs: [],  // REAPr annotations will be loaded separately
-                total_entries: toEntry - fromEntry + 1,
+                // Use full entry count from graph metadata if available; fallback to requested window size
+                total_entries: hasValidTotalEntries
+                    ? totalEntriesFromGraph
+                    : (toEntry - fromEntry + 1),
                 stats: {
-                    node_count: nodesData.count || (nodesData.results || nodesData).length,
-                    edge_count: edgesData.count || (edgesData.results || edgesData).length,
+                    node_count: nodesList.length,
+                    edge_count: edgesList.length,
                     entry_range: { from: fromEntry, to: toEntry }
                 }
             };
             
             this.currentGraph = graphId;
+
+            if (hasValidTotalEntries) {
+                const cachedMeta = this.graphMetadata[datasetId] || {};
+                this.graphMetadata[datasetId] = {
+                    ...cachedMeta,
+                    stats: {
+                        ...(cachedMeta.stats || {}),
+                        nodes: graphObj?.node_count ?? cachedMeta.stats?.nodes ?? nodesList.length,
+                        edges: graphObj?.edge_count ?? cachedMeta.stats?.edges ?? edgesList.length,
+                        entry_range: [1, totalEntriesFromGraph]
+                    }
+                };
+            }
             
             console.log('Loaded graph data:', {
                 nodes: this.currentData.nodes.length,

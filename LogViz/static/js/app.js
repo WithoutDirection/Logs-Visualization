@@ -1,16 +1,16 @@
 /**
  * Application Entry Point
  * Main application controller that coordinates all modules
- * Cache version: 7 - Update import URLs below to bust cache
+ * Cache version: 9 - Update import URLs below to bust cache
  */
 
-import { CONFIG } from './config.js?v=7';
-import DOMHelper from './modules/dom-helper.js?v=7';
-import notificationSystem from './modules/notifications.js?v=7';
-import GraphLoader from './modules/graph-loader.js?v=7';
-import DataFilters from './modules/filters.js?v=7';
-import Visualization from './modules/visualization.js?v=7';
-import Search from './modules/search.js?v=7';
+import { CONFIG } from './config.js?v=9';
+import DOMHelper from './modules/dom-helper.js?v=9';
+import notificationSystem from './modules/notifications.js?v=9';
+import GraphLoader from './modules/graph-loader.js?v=9';
+import DataFilters from './modules/filters.js?v=9';
+import Visualization from './modules/visualization.js?v=9';
+import Search from './modules/search.js?v=9';
 
 class LogVisualizationApp {
     constructor() {
@@ -79,11 +79,17 @@ class LogVisualizationApp {
             const metadata = this.graphLoader.getGraphMetadata(graphId);
             const option = document.createElement('option');
             option.value = graphId;
-            // Use safe access for stats that may not be loaded yet
-            const nodes = metadata?.stats?.nodes || '?';
-            const edges = metadata?.stats?.edges || '?';
-            option.textContent = `${metadata.name} (${nodes} nodes, ${edges} edges)`;
+            // Initial placeholder label
+            option.textContent = `${metadata?.name || 'Dataset ' + graphId} (… nodes, … edges)`;
             selector.appendChild(option);
+
+            // Asynchronously fetch full graph info to update counts
+            this.graphLoader.loadGraphInfo(graphId).then(fullMeta => {
+                if (!fullMeta) return;
+                const nodes = fullMeta?.stats?.nodes ?? '…';
+                const edges = fullMeta?.stats?.edges ?? '…';
+                option.textContent = `${fullMeta.name} (${nodes} nodes, ${edges} edges)`;
+            }).catch(() => {/* noop */});
         });
         
         console.log('Graph selector initialized with', graphIds.length, 'options');
@@ -125,8 +131,8 @@ class LogVisualizationApp {
         DOMHelper.addEventListeners(eventConfigs);
         
         // Input change listeners for navigation buttons
-        DOMHelper.addEventListener('entry-start', 'input', () => this.updateWindowNavigationButtons());
-        DOMHelper.addEventListener('entry-end', 'input', () => this.updateWindowNavigationButtons());
+    DOMHelper.addEventListener('entry-start', 'input', () => this.updateWindowNavigationButtons());
+    DOMHelper.addEventListener('entry-end', 'input', () => this.updateWindowNavigationButtons());
         
         // Feature toggle listeners
         this.setupFeatureToggleListeners();
@@ -262,14 +268,57 @@ class LogVisualizationApp {
             // Build raw data index for search
             const rawData = this.graphLoader.getCurrentData();
             if (rawData) {
+                const { stats, total_entries } = rawData;
+                if (stats?.entry_range) {
+                    const { from, to } = stats.entry_range;
+                    DOMHelper.setValueById('entry-start', from);
+                    DOMHelper.setValueById('entry-end', to);
+                    if (Number.isFinite(total_entries)) {
+                        DOMHelper.setAttributes('entry-start', { max: total_entries });
+                        DOMHelper.setAttributes('entry-end', { max: total_entries });
+                    }
+                }
                 this.search.buildSearchIndex(rawData, true); // true = raw data index
             }
             
             this.updateVisualization();
             this.updateLegend();
+            this.updateWindowNavigationButtons();
         } catch (error) {
             console.error('Failed to load graph:', error);
             // Error handling is done in GraphLoader
+        }
+    }
+
+    /**
+     * Load currently selected graph with the entry range from inputs
+     */
+    async loadGraphWithCurrentRange() {
+        const datasetId = DOMHelper.getValueById('graph-selector') || (this.graphLoader.getCurrentData()?.dataset_id);
+        if (!datasetId) return;
+        const startEntry = DOMHelper.getIntValueById('entry-start', 1);
+        const endEntry = DOMHelper.getIntValueById('entry-end', startEntry + (CONFIG.defaultEntryRange - 1));
+        try {
+            await this.graphLoader.loadGraph(datasetId, startEntry, endEntry);
+            const rawData = this.graphLoader.getCurrentData();
+            if (rawData) {
+                const { stats, total_entries } = rawData;
+                if (stats?.entry_range) {
+                    const { from, to } = stats.entry_range;
+                    DOMHelper.setValueById('entry-start', from);
+                    DOMHelper.setValueById('entry-end', to);
+                    if (Number.isFinite(total_entries)) {
+                        DOMHelper.setAttributes('entry-start', { max: total_entries });
+                        DOMHelper.setAttributes('entry-end', { max: total_entries });
+                    }
+                }
+                this.search.buildSearchIndex(rawData, true);
+            }
+            this.updateVisualization();
+            this.updateLegend();
+            this.updateWindowNavigationButtons();
+        } catch (e) {
+            console.error('Failed to load graph window:', e);
         }
     }
 
@@ -296,10 +345,8 @@ class LogVisualizationApp {
      * Handle apply range button click
      */
     onApplyRangeClick() {
-        if (this.graphLoader.hasLoadedGraph()) {
-            this.applyEntryRange();
-            this.updateWindowNavigationButtons();
-        }
+        // Always attempt to load with current range; will safely no-op if no dataset selected
+        this.loadGraphWithCurrentRange();
     }
 
     /**
@@ -386,6 +433,7 @@ class LogVisualizationApp {
      */
     updateEntryRange(entryRange) {
         const maxEntries = entryRange[1];
+        DOMHelper.setValueById('entry-start', entryRange[0] ?? 1);
         DOMHelper.setAttributes('entry-start', { max: maxEntries });
         DOMHelper.setAttributes('entry-end', { max: maxEntries });
         DOMHelper.setValueById('entry-end', Math.min(CONFIG.defaultEntryRange, maxEntries));
@@ -458,7 +506,8 @@ class LogVisualizationApp {
         DOMHelper.setValueById('entry-start', newStart);
         DOMHelper.setValueById('entry-end', newEnd);
         
-        this.applyEntryRange();
+        // Reload data for the new window
+        this.loadGraphWithCurrentRange();
         notificationSystem.showSuccess(`Moved to previous window: ${newStart} - ${newEnd}`);
     }
 
@@ -485,7 +534,7 @@ class LogVisualizationApp {
         DOMHelper.setValueById('entry-start', newStart);
         DOMHelper.setValueById('entry-end', newEnd);
         
-        this.applyEntryRange();
+        this.loadGraphWithCurrentRange();
         notificationSystem.showSuccess(`Moved to next window: ${newStart} - ${newEnd}`);
     }
 

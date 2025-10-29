@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -149,13 +150,18 @@ REST_FRAMEWORK = {
     ],
 }
 
-# CORS Configuration for React frontend
+# CORS Configuration for React/Vite frontend
+_cors_origins = os.getenv('DJANGO_CORS_ALLOWED_ORIGINS')  # comma-separated
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",  # Vite default port
-]
+] + ([o.strip() for o in _cors_origins.split(',')] if _cors_origins else [])
 
 CORS_ALLOW_CREDENTIALS = True
+
+# CSRF trusted origins (required when using HTTPS and reverse proxy)
+_csrf_trusted = os.getenv('DJANGO_CSRF_TRUSTED_ORIGINS')  # e.g. https://example.com,https://www.example.com
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_trusted.split(',')] if _csrf_trusted else []
 
 # Media files (uploaded datasets)
 MEDIA_URL = '/media/'

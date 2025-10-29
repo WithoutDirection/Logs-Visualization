@@ -13,6 +13,7 @@ class Visualization {
         this.network = null;
         this.selectedNodes = new Set();
         this.registryPathMapping = {};
+        this.currentData = null; // keep latest data for event handlers
     }
 
     /**
@@ -56,7 +57,10 @@ class Visualization {
             clientHeight: container.clientHeight
         });
 
-        const startTime = performance.now();
+    // Update current data reference used by event handlers
+    this.currentData = data;
+
+    const startTime = performance.now();
         const nodeCount = data.nodes.length;
         const edgeCount = data.edges.length;
         
@@ -129,7 +133,8 @@ class Visualization {
                     });
                 }, 100);
                 
-                this.setupNetworkEventListeners(data);
+                // Bind network event listeners once; handlers will read from this.currentData
+                this.setupNetworkEventListeners();
             }
 
             // Performance monitoring
@@ -411,7 +416,7 @@ class Visualization {
      * Setup network event listeners
      * @param {Object} data - Graph data for reference
      */
-    setupNetworkEventListeners(data) {
+    setupNetworkEventListeners() {
         if (!this.network) return;
 
         // Stabilization complete
@@ -427,6 +432,8 @@ class Visualization {
 
         // Click events
         this.network.on("click", (params) => {
+            const data = this.currentData;
+            if (!data) return;
             if (params.nodes.length > 0) {
                 const nodeId = params.nodes[0];
                 const node = data.nodes.find(n => n.id === nodeId);
@@ -872,6 +879,9 @@ class Visualization {
             </div>
         `;
 
+        // Prepare a placeholder for event detail that may be lazy-loaded
+        const detailSectionId = `event-detail-${edge.id || `${fromNode}-${toNode}`}`;
+
         detailsContent.innerHTML = `
             <div class="details-wrapper edge-details">
                 <section class="details-summary-card">
@@ -915,6 +925,10 @@ class Visualization {
                         ${entryIndicesMarkup}
                     </div>
                 </section>
+                <section class="detail-block" id="${detailSectionId}">
+                    <h4>🧾 Event Detail</h4>
+                    <div class="detail-note">Loading detail…</div>
+                </section>
                 ${lineIdMarkup ? `
                 <section class="detail-block">
                     <h4>📄 Related Line IDs</h4>
@@ -943,6 +957,52 @@ class Visualization {
         ]);
         
         console.log('Showing edge details:', edge);
+
+        // Try to render detail immediately if present in mapped metadata
+        const existingDetail = edge?.metadata?.original_event?.detail || edge?.metadata?.detail;
+        if (existingDetail) {
+            this.renderEventDetail(detailSectionId, existingDetail);
+        } else if (edge.id) {
+            // Lazy-load full edge metadata from API detail endpoint
+            const url = `${CONFIG.apiBaseUrl}/edges/${edge.id}/`;
+            fetch(url)
+                .then(resp => resp.ok ? resp.json() : Promise.reject(new Error(`HTTP ${resp.status}`)))
+                .then(data => {
+                    const detailText = data?.metadata?.original_event?.detail || data?.metadata?.detail || '';
+                    this.renderEventDetail(detailSectionId, detailText);
+                })
+                .catch(err => {
+                    console.warn('Failed to load edge detail:', err);
+                    this.renderEventDetail(detailSectionId, '', true);
+                });
+        } else {
+            this.renderEventDetail(detailSectionId, '', true);
+        }
+    }
+
+    /**
+     * Render Event Detail section content
+     * @param {string} sectionId - DOM element id for the detail section
+     * @param {string} detailText - Raw detail text
+     * @param {boolean} isError - Whether loading failed
+     */
+    renderEventDetail(sectionId, detailText, isError = false) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+
+        if (isError) {
+            section.innerHTML = `
+                <h4>🧾 Event Detail</h4>
+                <div class="detail-empty">No detail available</div>
+            `;
+            return;
+        }
+
+        const safe = this.escapeHtml(detailText || '').replace(/\n/g, '<br>');
+        section.innerHTML = `
+            <h4>🧾 Event Detail</h4>
+            ${safe ? `<div class="detail-pre">${safe}</div>` : '<div class="detail-empty">No detail available</div>'}
+        `;
     }
 
     /**

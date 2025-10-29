@@ -1,0 +1,33 @@
+# /etc/systemd/system/logviz-gunicorn.service
+# Systemd unit to run the Django app with Gunicorn
+# Replace the placeholders (USER, GROUP, APP_DIR, VENV_DIR) before enabling.
+
+[Unit]
+Description=LogViz Django Gunicorn Service
+After=network.target
+
+[Service]
+Type=simple
+User=logviz
+Group=logviz
+# Project working directory (folder containing manage.py)
+WorkingDirectory=/srv/logviz/LogViz
+# Python virtual environment path
+EnvironmentFile=/etc/logviz.env
+ExecStart=/srv/logviz/venv/bin/gunicorn --access-logfile - --workers 3 --bind 127.0.0.1:8001 LogViz.wsgi:application
+# Ensure correct permissions for static/media access if needed
+RuntimeDirectory=logviz
+RuntimeDirectoryMode=0755
+
+# Restart policy
+Restart=always
+RestartSec=3
+
+# Security hardening (optional but recommended)
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
