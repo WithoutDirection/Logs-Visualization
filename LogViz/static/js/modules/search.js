@@ -3,10 +3,10 @@
  * Handles searching and highlighting nodes/edges in the graph
  */
 
-import { CONFIG } from '../config.js';
-import DOMHelper from './dom-helper.js';
-import notificationSystem from './notifications.js';
-import * as SearchUtils from './search-utils.js';
+import { CONFIG } from '../config.js?v=11';
+import DOMHelper from './dom-helper.js?v=11';
+import notificationSystem from './notifications.js?v=11';
+import * as SearchUtils from './search-utils.js?v=11';
 
 class Search {
     constructor(visualization, app) {

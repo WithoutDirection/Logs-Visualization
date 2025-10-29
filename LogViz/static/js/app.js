@@ -1,16 +1,16 @@
 /**
  * Application Entry Point
  * Main application controller that coordinates all modules
- * Cache version: 9 - Update import URLs below to bust cache
+ * Cache version: 11 - Update import URLs below to bust cache
  */
 
-import { CONFIG } from './config.js?v=9';
-import DOMHelper from './modules/dom-helper.js?v=9';
-import notificationSystem from './modules/notifications.js?v=9';
-import GraphLoader from './modules/graph-loader.js?v=9';
-import DataFilters from './modules/filters.js?v=9';
-import Visualization from './modules/visualization.js?v=9';
-import Search from './modules/search.js?v=9';
+import { CONFIG } from './config.js?v=11';
+import DOMHelper from './modules/dom-helper.js?v=11';
+import notificationSystem from './modules/notifications.js?v=11';
+import GraphLoader from './modules/graph-loader.js?v=11';
+import DataFilters from './modules/filters.js?v=11';
+import Visualization from './modules/visualization.js?v=11';
+import Search from './modules/search.js?v=11';
 
 class LogVisualizationApp {
     constructor() {
@@ -181,7 +181,11 @@ class LogVisualizationApp {
             },
             {
                 id: 'combine-edges',
-                handler: () => this.onFeatureToggle('combine-edges')
+                handler: () => this.onCombineToggle('combine-edges')
+            },
+            {
+                id: 'combine-consecutive-edges',
+                handler: () => this.onCombineToggle('combine-consecutive-edges')
             },
             {
                 id: 'optimize-registry-paths',
@@ -192,6 +196,8 @@ class LogVisualizationApp {
         featureConfigs.forEach(config => {
             DOMHelper.addEventListener(config.id, 'change', config.handler);
         });
+
+        this.syncCombineToggleState();
         
         // Node type filters
         const nodeTypes = ['show-process', 'show-file', 'show-registry', 'show-network'];
@@ -209,6 +215,15 @@ class LogVisualizationApp {
         
         // Close details button
         DOMHelper.addEventListener('close-details-btn', 'click', () => this.hideDetailsPanel());
+    }
+
+    /**
+     * Handle combine-edge toggles with mutual exclusivity
+     * @param {string} toggleId - ID of the changed toggle
+     */
+    onCombineToggle(toggleId) {
+        this.syncCombineToggleState(toggleId);
+        this.onFeatureToggle('combine-mode');
     }
 
     /**
@@ -323,6 +338,30 @@ class LogVisualizationApp {
     }
 
     /**
+     * Add selected edge endpoints to REAPr predictions.
+     * @param {string|number} edgeId - Edge identifier
+     * @param {'source'|'destination'} role - Annotation role
+     * @returns {Promise<Array>} Updated annotations
+     */
+    async addEdgeToReaprPrediction(edgeId, role) {
+        if (!edgeId) return [];
+        try {
+            const annotations = await this.graphLoader.addReaprAnnotationForEdge(edgeId, role);
+            // Ensure REAPr toggle becomes available and active so the user sees changes immediately
+            DOMHelper.setEnabled('reapr-analysis', true);
+            if (!DOMHelper.isChecked('reapr-analysis')) {
+                DOMHelper.setChecked('reapr-analysis', true);
+            }
+            this.updateVisualization();
+            this.updateLegend();
+            return annotations;
+        } catch (error) {
+            notificationSystem.showError(`Failed to update REAPr predictions: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
      * Apply search filter (called by Search module)
      * @param {Array<number>} entryIndices - Entry indices matching search
      */
@@ -355,6 +394,7 @@ class LogVisualizationApp {
     onFeatureToggle(featureType) {
         if (this.graphLoader.hasLoadedGraph()) {
             this.updateVisualization();
+            this.updateLegend();
         }
     }
 
@@ -627,20 +667,23 @@ class LogVisualizationApp {
         // Update stats
         if (this.filteredData && stats) {
             const combineEdges = this.filteredData.filters_applied.combine_edges;
+            const combineConsecutive = this.filteredData.filters_applied.combine_consecutive_edges;
             let edgeStatsText = `Edges: ${this.filteredData.edges.length}`;
             
-            if (combineEdges) {
+            if (combineEdges || combineConsecutive) {
                 const totalOriginalEdges = this.filteredData.edges.reduce((sum, edge) => {
                     return sum + (edge.combined_count || 1);
                 }, 0);
                 edgeStatsText += ` (${totalOriginalEdges} original)`;
             }
+            const reaprTaggedEdges = this.filteredData.edges.filter(edge => edge.has_reapr_annotation).length;
             
             stats.innerHTML = `
                 <strong>Current View:</strong><br>
                 Nodes: ${this.filteredData.nodes.length}<br>
                 ${edgeStatsText}<br>
-                Entry Range: ${this.filteredData.filters_applied.entry_range[0]}-${this.filteredData.filters_applied.entry_range[1]}${combineEdges ? '<br><em>Edges combined by operation</em>' : ''}
+                ${reaprTaggedEdges ? `REAPr Tags (edges): ${reaprTaggedEdges}<br>` : ''}
+                Entry Range: ${this.filteredData.filters_applied.entry_range[0]}-${this.filteredData.filters_applied.entry_range[1]}${combineEdges ? '<br><em>Edges combined by operation</em>' : combineConsecutive ? '<br><em>Edges combined when consecutive</em>' : ''}
             `;
         }
     }
@@ -677,6 +720,9 @@ class LogVisualizationApp {
         });
         DOMHelper.setAttributes('combine-edges', { 
             title: 'Combine multiple edges with same operation' 
+        });
+        DOMHelper.setAttributes('combine-consecutive-edges', {
+            title: 'Combine only consecutive identical operations'
         });
         DOMHelper.setAttributes('show-edge-labels', { 
             title: 'Show/hide operation labels on edges' 
@@ -767,6 +813,37 @@ class LogVisualizationApp {
         this.visualization.destroy();
         this.graphLoader.clearCurrentGraph();
         notificationSystem.clearNotifications();
+    }
+
+    /**
+     * Ensure only one combine-mode toggle is active at a time.
+     * @param {string|null} changedId
+     */
+    syncCombineToggleState(changedId = null) {
+        const combinedId = 'combine-edges';
+        const consecutiveId = 'combine-consecutive-edges';
+
+        const combinedActive = DOMHelper.isChecked(combinedId);
+        const consecutiveActive = DOMHelper.isChecked(consecutiveId);
+
+        if (changedId === combinedId && combinedActive) {
+            DOMHelper.setChecked(consecutiveId, false);
+        }
+
+        if (changedId === consecutiveId && consecutiveActive) {
+            DOMHelper.setChecked(combinedId, false);
+        }
+
+        const finalCombined = DOMHelper.isChecked(combinedId);
+        const finalConsecutive = DOMHelper.isChecked(consecutiveId);
+
+        DOMHelper.setEnabled(consecutiveId, !finalCombined);
+        DOMHelper.setEnabled(combinedId, !finalConsecutive);
+
+        if (!finalCombined && !finalConsecutive && changedId === null) {
+            DOMHelper.setEnabled(consecutiveId, true);
+            DOMHelper.setEnabled(combinedId, true);
+        }
     }
 }
 

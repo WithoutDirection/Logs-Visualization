@@ -200,6 +200,12 @@
                             Combine Same Operations
                         </label>
                         <span id="combine-edges-help" class="sr-only">Combine multiple identical operations into single edges with counts</span>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="combine-consecutive-edges" aria-describedby="combine-consecutive-edges-help" title="Merge only consecutive identical operations between the same nodes. Preserves separated runs as individual edges.">
+                            Combine Consecutive Operations
+                        </label>
+                        <span id="combine-consecutive-edges-help" class="sr-only">Merge only back-to-back identical operations, keeping separated runs distinct</span>
                     </div>
                 </fieldset>
             </section>
@@ -386,6 +392,6 @@
         </div>
     </div>
 
-    <script type="module" src="{% static 'js/app.js' %}?v=9"></script>
+    <script type="module" src="{% static 'js/app.js' %}?v=11"></script>
 </body>
 </html>

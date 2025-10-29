@@ -3,8 +3,8 @@
  * Handles loading and managing graph data from Django REST API
  */
 
-import { CONFIG } from '../config.js';
-import notificationSystem from './notifications.js';
+import { CONFIG } from '../config.js?v=11';
+import notificationSystem from './notifications.js?v=11';
 
 class GraphLoader {
     constructor() {
@@ -135,6 +135,17 @@ class GraphLoader {
                 this.fetchAllResults(nodesUrl),
                 this.fetchAllResults(edgesUrl)
             ]);
+
+            let reaprAnnotations = [];
+            try {
+                reaprAnnotations = await this.loadReaprAnnotations(graphId);
+            } catch (reaprError) {
+                console.warn('Unable to load REAPr annotations:', reaprError);
+            }
+
+            const mappedNodes = this.mapNodes(nodesList);
+            const mappedEdges = this.mapEdges(edgesList);
+            this.applyReaprAnnotations(mappedNodes, mappedEdges, reaprAnnotations);
             
             // Map Django data to expected format
             const totalEntriesFromGraph = Number(graphObj?.entry_count);
@@ -143,10 +154,11 @@ class GraphLoader {
             this.currentData = {
                 graph_id: graphId,
                 dataset_id: datasetId,
-                nodes: this.mapNodes(nodesList),
-                edges: this.mapEdges(edgesList),
+                nodes: mappedNodes,
+                edges: mappedEdges,
                 sequence_groups: {},  // Will be loaded separately if needed
                 malicious_specs: [],  // REAPr annotations will be loaded separately
+                reapr_annotations: reaprAnnotations,
                 // Use full entry count from graph metadata if available; fallback to requested window size
                 total_entries: hasValidTotalEntries
                     ? totalEntriesFromGraph
@@ -154,7 +166,8 @@ class GraphLoader {
                 stats: {
                     node_count: nodesList.length,
                     edge_count: edgesList.length,
-                    entry_range: { from: fromEntry, to: toEntry }
+                    entry_range: { from: fromEntry, to: toEntry },
+                    reapr_annotations: reaprAnnotations.length
                 }
             };
             
@@ -171,6 +184,13 @@ class GraphLoader {
                         entry_range: [1, totalEntriesFromGraph]
                     }
                 };
+
+                if (reaprAnnotations.length > 0) {
+                    this.graphMetadata[datasetId].available_features = {
+                        ...(cachedMeta.available_features || {}),
+                        reapr_analysis: true
+                    };
+                }
             }
             
             console.log('Loaded graph data:', {
@@ -246,6 +266,108 @@ class GraphLoader {
                 title: this.createEdgeTitle(edge)
             };
         });
+    }
+
+    /**
+     * Attach REAPr annotations to mapped nodes and edges.
+     * @param {Array} nodes - Mapped node objects
+     * @param {Array} edges - Mapped edge objects
+     * @param {Array} annotations - Raw REAPr annotations
+     */
+    applyReaprAnnotations(nodes, edges, annotations) {
+        const nodeMap = new Map();
+        const edgeMap = new Map();
+
+        annotations.forEach(annotation => {
+            const nodeId = annotation.node ? annotation.node.toString() : null;
+            const edgeId = annotation.edge ? annotation.edge.toString() : null;
+
+            if (nodeId) {
+                if (!nodeMap.has(nodeId)) {
+                    nodeMap.set(nodeId, []);
+                }
+                nodeMap.get(nodeId).push(annotation);
+            }
+
+            if (edgeId) {
+                if (!edgeMap.has(edgeId)) {
+                    edgeMap.set(edgeId, []);
+                }
+                edgeMap.get(edgeId).push(annotation);
+            }
+        });
+
+        nodes.forEach(node => {
+            const annotationsForNode = nodeMap.get(node.id) || [];
+            node.reapr_annotations = annotationsForNode;
+            node.has_reapr_annotation = annotationsForNode.length > 0;
+        });
+
+        edges.forEach(edge => {
+            const annotationsForEdge = edgeMap.get(edge.id) || [];
+            edge.reapr_annotations = annotationsForEdge;
+            edge.has_reapr_annotation = annotationsForEdge.length > 0;
+            edge.is_reapr_attack_path = annotationsForEdge.some(a => a.is_attack_path);
+        });
+    }
+
+    /**
+     * Add or update a REAPr annotation for an edge via API and merge into current data.
+     * @param {number|string} edgeId - Edge identifier
+     * @param {'source'|'destination'} role - Annotation role
+     * @returns {Promise<Array>} Updated annotations returned by API
+     */
+    async addReaprAnnotationForEdge(edgeId, role) {
+        const url = `${CONFIG.apiBaseUrl}/edges/${edgeId}/reapr-tag/`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role })
+        });
+
+        if (!response.ok) {
+            throw new Error(`REAPr update failed (${response.status})`);
+        }
+
+        const payload = await response.json();
+        const annotations = payload.annotations || [];
+
+        if (!this.currentData) {
+            return annotations;
+        }
+
+        // Merge annotations into current dataset
+        const existing = this.currentData.reapr_annotations || [];
+        const byId = new Map(existing.map(a => [a.id, a]));
+        annotations.forEach(annotation => {
+            if (annotation.id) {
+                byId.set(annotation.id, annotation);
+            }
+        });
+
+        this.currentData.reapr_annotations = Array.from(byId.values());
+
+        // Reapply annotations to nodes and edges
+        this.applyReaprAnnotations(this.currentData.nodes, this.currentData.edges, this.currentData.reapr_annotations);
+
+        // Ensure metadata reflects REAPr availability
+        const datasetId = this.currentData.dataset_id;
+        if (datasetId) {
+            const existingMeta = this.graphMetadata[datasetId] || {};
+            this.graphMetadata[datasetId] = {
+                ...existingMeta,
+                available_features: {
+                    ...(existingMeta.available_features || {}),
+                    reapr_analysis: true
+                }
+            };
+        }
+
+        if (this.currentData.stats) {
+            this.currentData.stats.reapr_annotations = this.currentData.reapr_annotations.length;
+        }
+
+        return annotations;
     }
 
     /**

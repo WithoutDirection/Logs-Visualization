@@ -3,9 +3,9 @@
  * Handles all vis.js network visualization logic
  */
 
-import { CONFIG } from '../config.js';
-import DOMHelper from './dom-helper.js';
-import notificationSystem from './notifications.js';
+import { CONFIG } from '../config.js?v=11';
+import DOMHelper from './dom-helper.js?v=11';
+import notificationSystem from './notifications.js?v=11';
 import { createRegistryPathMapping, getRegistryLabel } from './registry-paths.js';
 
 class Visualization {
@@ -13,6 +13,13 @@ class Visualization {
         this.network = null;
         this.selectedNodes = new Set();
         this.registryPathMapping = {};
+        this.reaprColorMap = {
+            root_cause: '#c62828',
+            malicious: '#ef6c00',
+            contaminated: '#f9a825',
+            impact: '#6a1b9a',
+            benign: '#546e7a'
+        };
         this.currentData = null; // keep latest data for event handlers
     }
 
@@ -244,9 +251,9 @@ class Visualization {
                 size: this.getNodeSize(node),
                 originalLabel: node.label
             };
-            // 若 group 能提供配色，避免覆蓋 group 色；僅在沒有 group 時指定顏色
-            if (!group) {
-                nodeObj.color = this.getNodeColor(node);
+            const colorOverride = this.getNodeColor(node, group);
+            if (colorOverride) {
+                nodeObj.color = colorOverride;
             }
             return nodeObj;
         });
@@ -535,18 +542,61 @@ class Visualization {
         });
     }
 
+    getReadableReaprLabel(label) {
+        if (!label) return '';
+        return label.replace(/_/g, ' ').replace(/\b\w/g, (s) => s.toUpperCase());
+    }
+
+    getReaprNodeColor(node) {
+        if (!DOMHelper.isChecked('reapr-analysis')) {
+            return null;
+        }
+        const annotations = node.reapr_annotations || [];
+        if (!annotations.length) {
+            return null;
+        }
+        const label = annotations[0]?.label;
+        if (!label) {
+            return null;
+        }
+        const background = this.reaprColorMap[label] || '#ff7043';
+        return {
+            background,
+            border: '#1b1b1b',
+            highlight: {
+                background,
+                border: '#000000'
+            }
+        };
+    }
+
+    getReaprEdgeColor(edge) {
+        if (!DOMHelper.isChecked('reapr-analysis')) {
+            return null;
+        }
+        const annotations = edge.reapr_annotations || [];
+        if (!annotations.length) {
+            return null;
+        }
+        const prioritized = annotations.find(a => a.label === 'malicious') || annotations[0];
+        return this.reaprColorMap[prioritized.label] || '#ff7043';
+    }
+
     /**
      * Get node color based on type and features
      * @param {Object} node - Node object
-     * @returns {string} Color value
+     * @returns {string|Object|null} Color value or null to use default group styling
      */
-    getNodeColor(node) {
-        // TODO: Add REAPr coloring when enabled
-        if (DOMHelper.isChecked('reapr-analysis')) {
-            // Implement REAPr-based coloring
+    getNodeColor(node, group = undefined) {
+        const reaprColor = this.getReaprNodeColor(node);
+        if (reaprColor) {
+            return reaprColor;
         }
 
         const normalized = this.normalizeNodeType(node.type);
+        if (group) {
+            return null; // Allow vis.js group styling to apply
+        }
         return CONFIG.nodeColors[normalized] || CONFIG.nodeColors.default;
     }
 
@@ -566,6 +616,11 @@ class Visualization {
      * @returns {string} Color value
      */
     getEdgeColor(edge, data) {
+        const reaprColor = this.getReaprEdgeColor(edge);
+        if (reaprColor) {
+            return reaprColor;
+        }
+
         if (DOMHelper.isChecked('sequence-grouping')) {
             if (edge.sequence_color) {
                 return edge.sequence_color;
@@ -607,6 +662,10 @@ class Visualization {
      * @returns {number} Width value
      */
     getEdgeWidth(edge) {
+        if (DOMHelper.isChecked('reapr-analysis') && edge.has_reapr_annotation) {
+            return Math.max(CONFIG.visualization.customEdgeWidths.defaultWidth + 2, 3);
+        }
+
         if (edge.is_combined && edge.combined_count > 1) {
             return Math.min(2 + edge.combined_count, 8);
         }
@@ -698,6 +757,7 @@ class Visualization {
         const lastTimestamp = Array.isArray(node.timestamps) && node.timestamps.length ? Math.max(...node.timestamps) : null;
         const firstSeen = this.formatDate(firstTimestamp);
         const lastSeen = this.formatDate(lastTimestamp);
+        const reaprAnnotationsMarkup = this.renderReaprAnnotations(node.reapr_annotations, 'No REAPr annotations for this node');
 
         this.updateDetailsHeader({
             icon: nodeIcon,
@@ -778,6 +838,13 @@ class Visualization {
                         ${entryIndicesMarkup}
                     </div>
                 </section>
+                ${node.has_reapr_annotation ? `
+                <section class="detail-block">
+                    <h4>🧠 REAPr Tags</h4>
+                    <div class="detail-chip-group">
+                        ${reaprAnnotationsMarkup}
+                    </div>
+                </section>` : ''}
                 ${timelineHtml}
                 <section class="detail-block">
                     <h4>🎯 Quick Actions</h4>
@@ -876,11 +943,14 @@ class Visualization {
                 <span class="summary-badge"><span>Edge Type</span>${edge.is_combined ? 'Combined edge' : 'Single edge'}</span>
                 ${combinedCount ? `<span class="summary-badge"><span>Operations</span>${combinedCount}</span>` : ''}
                 ${edge.entry_indices ? `<span class="summary-badge"><span>Entry count</span>${this.formatNumber(Array.isArray(edge.entry_indices) ? edge.entry_indices.length : 1)}</span>` : ''}
+                ${edge.reapr_annotations && edge.reapr_annotations.length ? `<span class="summary-badge"><span>REAPr Tags</span>${edge.reapr_annotations.length}</span>` : ''}
             </div>
         `;
 
         // Prepare a placeholder for event detail that may be lazy-loaded
         const detailSectionId = `event-detail-${edge.id || `${fromNode}-${toNode}`}`;
+        const reaprAnnotationsMarkup = this.renderReaprAnnotations(edge.reapr_annotations);
+        const edgeIdSafe = this.escapeHtml(edge.id || '');
 
         detailsContent.innerHTML = `
             <div class="details-wrapper edge-details">
@@ -938,6 +1008,17 @@ class Visualization {
                 </section>` : ''}
                 ${timelineHtml}
                 <section class="detail-block">
+                    <h4>🧠 REAPr Predictions</h4>
+                    <div class="detail-chip-group">
+                        ${reaprAnnotationsMarkup}
+                    </div>
+                    <div class="detail-toolbar">
+                        <button class="detail-btn" data-action="reapr-source" data-edge-id="${edgeIdSafe}">⚡ Mark source as root cause</button>
+                        <button class="detail-btn secondary" data-action="reapr-destination" data-edge-id="${edgeIdSafe}">🎯 Mark destination as impact</button>
+                    </div>
+                    <div class="detail-note">After tagging, toggle “Show REAPr Analysis” to highlight the evolving attack path.</div>
+                </section>
+                <section class="detail-block">
                     <h4>🎯 Quick Actions</h4>
                     <div class="detail-toolbar">
                         <button class="detail-btn" data-action="focus-edge" data-edge-src="${fromNode}" data-edge-dst="${toNode}">🎯 Focus on edge</button>
@@ -953,6 +1034,14 @@ class Visualization {
             {
                 selector: '[data-action="focus-edge"]',
                 handler: () => this.focusOnEdge(edge.src, edge.dst)
+            },
+            {
+                selector: '[data-action="reapr-source"]',
+                handler: () => this.tagEdgeForReapr(edge.id, 'source')
+            },
+            {
+                selector: '[data-action="reapr-destination"]',
+                handler: () => this.tagEdgeForReapr(edge.id, 'destination')
             }
         ]);
         
@@ -1303,6 +1392,32 @@ class Visualization {
         });
     }
 
+    async tagEdgeForReapr(edgeId, role) {
+        if (!edgeId) return;
+        const appInstance = window.logVizApp;
+        if (!appInstance || typeof appInstance.addEdgeToReaprPrediction !== 'function') {
+            notificationSystem.showError('REAPr integration is not available in this context.');
+            return;
+        }
+
+        try {
+            await appInstance.addEdgeToReaprPrediction(edgeId, role);
+            const roleLabel = role === 'source' ? 'source' : 'destination';
+            notificationSystem.showSuccess(`Tagged ${roleLabel} for REAPr analysis`);
+
+            const currentData = appInstance.graphLoader.getCurrentData();
+            if (currentData) {
+                const updatedEdge = currentData.edges.find(e => e.id === String(edgeId));
+                if (updatedEdge) {
+                    this.showEdgeDetails(updatedEdge);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to update REAPr annotations:', error);
+            notificationSystem.showError(`Failed to tag edge for REAPr: ${error.message}`);
+        }
+    }
+
     /**
      * Retrieve icon for node types
      * @param {string} type - Node type
@@ -1382,6 +1497,25 @@ class Visualization {
         return filtered
             .map(value => `<span class="detail-chip${extraClass ? ` ${extraClass}` : ''}">${this.escapeHtml(value)}</span>`)
             .join('');
+    }
+
+    renderReaprAnnotations(annotations = [], placeholder = 'No REAPr predictions yet') {
+        if (!Array.isArray(annotations) || annotations.length === 0) {
+            return `<span class="detail-empty">${this.escapeHtml(placeholder)}</span>`;
+        }
+
+        return annotations.map(ann => {
+            const label = this.getReadableReaprLabel(ann.label);
+            const color = this.reaprColorMap[ann.label] || '#546e7a';
+            const target = ann.node_id ? `Node ${this.escapeHtml(ann.node_id)}`
+                : ann.edge_id ? `Edge #${this.escapeHtml(String(ann.edge_id))}`
+                : 'Graph';
+            return `
+                <span class="detail-chip" style="border-color: ${color}; background-color: rgba(0,0,0,0.04)">
+                    <strong style="color:${color}">${this.escapeHtml(label)}</strong> — ${this.escapeHtml(target)}
+                </span>
+            `;
+        }).join('');
     }
 
     /**

@@ -74,6 +74,53 @@ class EdgeViewSet(viewsets.ReadOnlyModelViewSet):
             
         return queryset
 
+    @action(detail=True, methods=['post'], url_path='reapr-tag')
+    def add_reapr_tag(self, request, pk=None):
+        """Create or update REAPr annotations based on an edge selection."""
+        edge = self.get_object()
+        role = (request.data or {}).get('role')
+        if role not in {'source', 'destination'}:
+            return Response({'error': 'Invalid role. Use "source" or "destination".'}, status=status.HTTP_400_BAD_REQUEST)
+
+        annotations = []
+
+        # Always mark the selected edge as part of the attack path
+        edge_annotation, _ = ReaprAnnotation.objects.update_or_create(
+            graph=edge.graph,
+            edge=edge,
+            source='manual-selection-edge',
+            defaults={
+                'label': 'malicious',
+                'is_attack_path': True,
+            }
+        )
+        annotations.append(edge_annotation)
+
+        # Map role to node label
+        if role == 'source':
+            target_node = edge.src
+            label = 'root_cause'
+            source_label = 'manual-selection-src'
+        else:
+            target_node = edge.dst
+            label = 'impact'
+            source_label = 'manual-selection-dst'
+
+        node_annotation, _ = ReaprAnnotation.objects.update_or_create(
+            graph=edge.graph,
+            node=target_node,
+            source=source_label,
+            defaults={
+                'label': label,
+                'edge': edge,
+                'is_attack_path': True,
+            }
+        )
+        annotations.append(node_annotation)
+
+        serializer = ReaprAnnotationSerializer(annotations, many=True)
+        return Response({'role': role, 'annotations': serializer.data}, status=status.HTTP_200_OK)
+
 
 class SequenceGroupViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -91,7 +138,7 @@ class SequenceGroupViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-confidence']
 
 
-class ReaprAnnotationViewSet(viewsets.ReadOnlyModelViewSet):
+class ReaprAnnotationViewSet(viewsets.ModelViewSet):
     """
     ViewSet for REAPr annotations.
     Endpoints:

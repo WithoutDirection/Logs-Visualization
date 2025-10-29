@@ -3,9 +3,9 @@
  * Handles all data filtering logic for the visualization
  */
 
-import DOMHelper from './dom-helper.js';
-import { CONFIG } from '../config.js';
-import { combineEdgesByOperation } from './edge-aggregator.js';
+import DOMHelper from './dom-helper.js?v=11';
+import { CONFIG } from '../config.js?v=11';
+import { combineEdgesByOperation, combineConsecutiveEdgesByOperation } from './edge-aggregator.js?v=11';
 
 class DataFilters {
     constructor() {
@@ -15,6 +15,7 @@ class DataFilters {
             reapr_analysis: false,
             confidence_threshold: 0.5,
             combine_edges: false,
+            combine_consecutive_edges: false,
             node_types: {
                 'Process': true,
                 'File': true,
@@ -56,6 +57,7 @@ class DataFilters {
         const showReapr = DOMHelper.isChecked('reapr-analysis');
         const confidenceThreshold = DOMHelper.getIntValueById('confidence-slider', 50) / 100;
         const combineEdges = DOMHelper.isChecked('combine-edges');
+        const combineConsecutive = DOMHelper.isChecked('combine-consecutive-edges');
 
         let filteredEdges;
         let entryRange;
@@ -82,7 +84,9 @@ class DataFilters {
         }
 
         // Apply edge combination if enabled
-        if (combineEdges) {
+        if (combineConsecutive) {
+            filteredEdges = combineConsecutiveEdgesByOperation(filteredEdges);
+        } else if (combineEdges) {
             filteredEdges = combineEdgesByOperation(filteredEdges);
         }
 
@@ -139,7 +143,8 @@ class DataFilters {
                 reapr_analysis: showReapr,
                 confidence_threshold: confidenceThreshold,
                 node_types: nodeTypeFilters,
-                combine_edges: combineEdges
+                combine_edges: combineEdges,
+                combine_consecutive_edges: combineConsecutive
             }
         };
     }
@@ -158,6 +163,7 @@ class DataFilters {
             reapr_analysis: DOMHelper.isChecked('reapr-analysis'),
             confidence_threshold: DOMHelper.getIntValueById('confidence-slider', 50) / 100,
             combine_edges: DOMHelper.isChecked('combine-edges'),
+            combine_consecutive_edges: DOMHelper.isChecked('combine-consecutive-edges'),
             node_types: {
                 'Process': DOMHelper.isChecked('show-process'),
                 'File': DOMHelper.isChecked('show-file'),
@@ -201,6 +207,7 @@ class DataFilters {
         DOMHelper.setChecked('reapr-analysis', this.defaultFilters.reapr_analysis);
         DOMHelper.setValueById('confidence-slider', this.defaultFilters.confidence_threshold * 100);
         DOMHelper.setChecked('combine-edges', this.defaultFilters.combine_edges);
+        DOMHelper.setChecked('combine-consecutive-edges', this.defaultFilters.combine_consecutive_edges);
         
         Object.entries(this.defaultFilters.node_types).forEach(([type, checked]) => {
             const id = `show-${type.toLowerCase()}`;

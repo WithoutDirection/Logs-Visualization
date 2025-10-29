@@ -3,7 +3,7 @@
  * Handles all user notifications and status updates
  */
 
-import { CONFIG } from '../config.js';
+import { CONFIG } from '../config.js?v=11';
 
 class NotificationSystem {
     constructor() {
@@ -160,6 +160,7 @@ class NotificationSystem {
         if (appliedFilters.sequence_grouping) activeFilters.push('Sequence');
         if (appliedFilters.reapr_analysis) activeFilters.push('REAPr');
         if (appliedFilters.combine_edges) activeFilters.push('Combined');
+        if (appliedFilters.combine_consecutive_edges) activeFilters.push('Consecutive');
         
         const filterText = activeFilters.length > 0 ? activeFilters.join(', ') : 'None';
         const filterElement = document.getElementById('filter-text');
