@@ -93,11 +93,17 @@
                         </label>
                         <span id="sequence-grouping-help" class="sr-only">Group related operations into sequence patterns for better analysis</span>
 
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="reapr-analysis" aria-describedby="reapr-analysis-help">
-                            Show REAPr Analysis
-                        </label>
-                        <span id="reapr-analysis-help" class="sr-only">Display REAPr (Registry Event Analysis and Pattern Recognition) analysis results</span>
+                        <div class="checkbox-label" style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
+                            <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                                <input type="checkbox" id="reapr-analysis" aria-describedby="reapr-analysis-help">
+                                <span>Show REAPr Analysis</span>
+                            </label>
+                            <div style="display:flex; gap:6px;">
+                                <button id="compute-reapr-btn" class="small" type="button" title="Compute labels from seeds (root/impact)" aria-label="Compute REAPr labels">Compute</button>
+                                <button id="clear-reapr-btn" class="small" type="button" title="Clear all REAPr tags for this graph" aria-label="Clear REAPr annotations">Clear</button>
+                            </div>
+                        </div>
+                        <span id="reapr-analysis-help" class="sr-only">Display the REAPr analysis results. Use Clear to remove existing tags for the loaded graph.</span>
 
                         <label class="checkbox-label">
                             <input type="checkbox" id="show-legend" aria-describedby="show-legend-help">
@@ -392,6 +398,6 @@
         </div>
     </div>
 
-    <script type="module" src="{% static 'js/app.js' %}?v=11"></script>
+    <script type="module" src="{% static 'js/app.js' %}?v=13"></script>
 </body>
 </html>

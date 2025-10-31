@@ -312,6 +312,97 @@ class GraphLoader {
     }
 
     /**
+     * Clear all REAPr annotations for the current or specified graph.
+     * @param {number|string|null} graphId Optional graph id; defaults to current
+     * @returns {Promise<{deleted:number, graph:number}>}
+     */
+    async clearReaprAnnotations(graphId = null) {
+        const targetGraphId = graphId || this.currentGraph;
+        if (!targetGraphId) return { deleted: 0, graph: null };
+
+        const url = `${CONFIG.apiBaseUrl}/reapr/clear/`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ graph: targetGraphId })
+        });
+        if (!resp.ok) {
+            throw new Error(`Failed to clear REAPr annotations (HTTP ${resp.status})`);
+        }
+        const payload = await resp.json();
+
+        // Update local state to reflect cleared annotations
+        if (this.currentData) {
+            this.currentData.reapr_annotations = [];
+            this.applyReaprAnnotations(this.currentData.nodes, this.currentData.edges, []);
+
+            // Update feature availability cache
+            const datasetId = this.currentData.dataset_id;
+            if (datasetId && this.graphMetadata[datasetId]) {
+                const meta = this.graphMetadata[datasetId];
+                meta.available_features = {
+                    ...(meta.available_features || {}),
+                    reapr_analysis: false,
+                    has_reapr_annotations: false
+                };
+            }
+            if (this.currentData.stats) {
+                this.currentData.stats.reapr_annotations = 0;
+            }
+        }
+
+        return payload;
+    }
+
+    /**
+     * Compute REAPr labels on the backend for the given graph and refresh local annotations.
+     * @param {number|string|null} graphId Optional graph id; defaults to current
+     * @returns {Promise<Object>} Summary payload from API
+     */
+    async computeReaprLabels(graphId = null) {
+        const targetGraphId = graphId || this.currentGraph;
+        if (!targetGraphId) return { created: 0, graph: null };
+
+        const url = `${CONFIG.apiBaseUrl}/reapr/compute/`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ graph: targetGraphId })
+        });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            let msg = `Failed to compute REAPr labels (HTTP ${resp.status})`;
+            try { const data = JSON.parse(text); if (data?.error) msg = data.error; } catch {}
+            throw new Error(msg);
+        }
+        const payload = await resp.json();
+
+        // Reload annotations and apply to in-memory data
+        if (this.currentData) {
+            const annotations = await this.loadReaprAnnotations(targetGraphId);
+            this.currentData.reapr_annotations = annotations;
+            this.applyReaprAnnotations(this.currentData.nodes, this.currentData.edges, annotations);
+
+            // Update metadata feature availability
+            const datasetId = this.currentData.dataset_id;
+            if (datasetId) {
+                const meta = this.graphMetadata[datasetId] || {};
+                meta.available_features = {
+                    ...(meta.available_features || {}),
+                    reapr_analysis: true,
+                    has_reapr_annotations: (annotations?.length || 0) > 0
+                };
+                this.graphMetadata[datasetId] = meta;
+            }
+            if (this.currentData.stats) {
+                this.currentData.stats.reapr_annotations = annotations.length;
+            }
+        }
+
+        return payload;
+    }
+
+    /**
      * Add or update a REAPr annotation for an edge via API and merge into current data.
      * @param {number|string} edgeId - Edge identifier
      * @param {'source'|'destination'} role - Annotation role

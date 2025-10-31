@@ -1,16 +1,16 @@
 /**
  * Application Entry Point
  * Main application controller that coordinates all modules
- * Cache version: 11 - Update import URLs below to bust cache
+ * Cache version: 13 - Update import URLs below to bust cache
  */
 
-import { CONFIG } from './config.js?v=11';
-import DOMHelper from './modules/dom-helper.js?v=11';
-import notificationSystem from './modules/notifications.js?v=11';
-import GraphLoader from './modules/graph-loader.js?v=11';
-import DataFilters from './modules/filters.js?v=11';
-import Visualization from './modules/visualization.js?v=11';
-import Search from './modules/search.js?v=11';
+import { CONFIG } from './config.js?v=13';
+import DOMHelper from './modules/dom-helper.js?v=13';
+import notificationSystem from './modules/notifications.js?v=13';
+import GraphLoader from './modules/graph-loader.js?v=13';
+import DataFilters from './modules/filters.js?v=13';
+import Visualization from './modules/visualization.js?v=13';
+import Search from './modules/search.js?v=13';
 
 class LogVisualizationApp {
     constructor() {
@@ -197,6 +197,10 @@ class LogVisualizationApp {
             DOMHelper.addEventListener(config.id, 'change', config.handler);
         });
 
+        // Buttons should use click events (not change)
+        DOMHelper.addEventListener('clear-reapr-btn', 'click', () => this.onClearReaprClick());
+        DOMHelper.addEventListener('compute-reapr-btn', 'click', () => this.onComputeReaprClick());
+
         this.syncCombineToggleState();
         
         // Node type filters
@@ -295,6 +299,7 @@ class LogVisualizationApp {
                 }
                 this.search.buildSearchIndex(rawData, true); // true = raw data index
             }
+            this.resetReaprToggle();
             
             this.updateVisualization();
             this.updateLegend();
@@ -334,6 +339,136 @@ class LogVisualizationApp {
             this.updateWindowNavigationButtons();
         } catch (e) {
             console.error('Failed to load graph window:', e);
+        }
+    }
+
+    /**
+     * Reset REAPr highlighting toggle to its default (off) state.
+     */
+    resetReaprToggle() {
+        if (DOMHelper.isChecked('reapr-analysis')) {
+            notificationSystem.showInfo('REAPr labels cleared for the freshly loaded graph.');
+        }
+        DOMHelper.setChecked('reapr-analysis', false);
+    }
+
+    /**
+     * Clear all REAPr annotations for the current graph via API
+     */
+    async onClearReaprClick() {
+        try {
+            if (!this.graphLoader.hasLoadedGraph()) {
+                notificationSystem.showInfo('Load a graph first to clear its REAPr tags.');
+                return;
+            }
+            const currentGraphId = this.graphLoader.getCurrentGraphId();
+            notificationSystem.updateStatus('Clearing REAPr annotations…');
+            if (typeof this.graphLoader.clearReaprAnnotations === 'function') {
+                await this.graphLoader.clearReaprAnnotations(currentGraphId);
+            } else {
+                // Fallback: call API directly and update local state
+                const url = `${CONFIG.apiBaseUrl}/reapr/clear/`;
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ graph: currentGraphId })
+                });
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}`);
+                }
+                // Clear annotations in current data
+                const cd = this.graphLoader.getCurrentData();
+                if (cd) {
+                    cd.reapr_annotations = [];
+                    this.graphLoader.applyReaprAnnotations(cd.nodes, cd.edges, []);
+                    // Disable REAPr feature until new tags exist
+                    const datasetId = cd.dataset_id;
+                    if (datasetId) {
+                        const meta = this.graphLoader.graphMetadata[datasetId] || {};
+                        meta.available_features = {
+                            ...(meta.available_features || {}),
+                            reapr_analysis: false,
+                            has_reapr_annotations: false
+                        };
+                        this.graphLoader.graphMetadata[datasetId] = meta;
+                    }
+                    if (cd.stats) {
+                        cd.stats.reapr_annotations = 0;
+                    }
+                }
+            }
+            // Turn off the toggle and disable it (no annotations left)
+            DOMHelper.setChecked('reapr-analysis', false);
+            DOMHelper.setEnabled('reapr-analysis', false);
+            this.updateVisualization();
+            this.updateLegend();
+            notificationSystem.showSuccess('REAPr annotations cleared for this graph');
+        } catch (e) {
+            notificationSystem.showError(`Failed to clear REAPr annotations: ${e.message}`);
+        }
+    }
+
+    /**
+     * Trigger backend computation of REAPr labels from seeds
+     */
+    async onComputeReaprClick() {
+        try {
+            if (!this.graphLoader.hasLoadedGraph()) {
+                notificationSystem.showInfo('Load a graph first to compute REAPr labels.');
+                return;
+            }
+            const currentGraphId = this.graphLoader.getCurrentGraphId();
+            notificationSystem.updateStatus('Computing REAPr labels…');
+            let summary;
+            if (typeof this.graphLoader.computeReaprLabels === 'function') {
+                summary = await this.graphLoader.computeReaprLabels(currentGraphId);
+            } else {
+                // Fallback if cached loader lacks the method: call API directly and refresh annotations
+                const url = `${CONFIG.apiBaseUrl}/reapr/compute/`;
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ graph: currentGraphId })
+                });
+                if (!resp.ok) {
+                    const text = await resp.text().catch(() => '');
+                    let msg = `HTTP ${resp.status}`;
+                    try { const data = JSON.parse(text); if (data?.error) msg = data.error; } catch {}
+                    throw new Error(msg);
+                }
+                summary = await resp.json();
+
+                // Reload annotations and apply
+                const annotations = await this.graphLoader.loadReaprAnnotations(currentGraphId);
+                const cd = this.graphLoader.getCurrentData();
+                if (cd) {
+                    cd.reapr_annotations = annotations;
+                    this.graphLoader.applyReaprAnnotations(cd.nodes, cd.edges, annotations);
+                    // Update feature flags locally
+                    const datasetId = cd.dataset_id;
+                    if (datasetId) {
+                        const meta = this.graphLoader.graphMetadata[datasetId] || {};
+                        meta.available_features = {
+                            ...(meta.available_features || {}),
+                            reapr_analysis: true,
+                            has_reapr_annotations: (annotations?.length || 0) > 0
+                        };
+                        this.graphLoader.graphMetadata[datasetId] = meta;
+                    }
+                    if (cd.stats) {
+                        cd.stats.reapr_annotations = annotations.length;
+                    }
+                }
+            }
+            // Ensure REAPr toggle is enabled and on so the user sees results immediately
+            DOMHelper.setEnabled('reapr-analysis', true);
+            DOMHelper.setChecked('reapr-analysis', true);
+            this.updateVisualization();
+            this.updateLegend();
+            const s = summary?.summary || {};
+            notificationSystem.showSuccess(`REAPr computed: roots ${s.root_cause_nodes||0}, impacts ${s.impact_nodes||0}, malicious ${s.malicious_nodes||0}, contaminated ${s.contaminated_nodes||0}, edges ${s.attack_path_edges||0}`);
+        } catch (e) {
+            notificationSystem.showError(`Failed to compute REAPr labels: ${e.message}`);
         }
     }
 

@@ -21,6 +21,9 @@ class Visualization {
             benign: '#546e7a'
         };
         this.currentData = null; // keep latest data for event handlers
+        // Proximity fading maps when REAPr is enabled
+        this._attackEntryIndices = [];
+        this._nodeOpacityMap = new Map();
     }
 
     /**
@@ -108,6 +111,9 @@ class Visualization {
                 this.registryPathMapping = {};
             }
 
+            // Precompute proximity fading when REAPr is enabled
+            this.prepareReaprProximityFading(data);
+
             // Prepare nodes for vis.js with progressive processing
             const visNodes = await this.processNodesProgressively(data.nodes, registryOptimizationEnabled);
 
@@ -161,6 +167,288 @@ class Visualization {
             console.error('Error creating network visualization:', error);
             notificationSystem.showError(`Failed to create visualization: ${error.message}`);
         }
+    }
+
+    /**
+     * Precompute proximity fading maps based on attack-path edges when REAPr is enabled.
+     * Populates this._attackEntryIndices (sorted) and this._nodeOpacityMap.
+     */
+    prepareReaprProximityFading(data) {
+        // Reset by default
+        this._attackEntryIndices = [];
+        this._nodeOpacityMap = new Map();
+
+        const reaprOn = DOMHelper.isChecked('reapr-analysis');
+        if (!reaprOn || !data || !Array.isArray(data.edges) || data.edges.length === 0) {
+            return;
+        }
+
+        // Collect and sort attack-path entry indices
+        const indices = [];
+        for (const e of data.edges) {
+            if (!e.is_reapr_attack_path) continue;
+            const edgeEntries = this.collectEntryIndices(e);
+            edgeEntries.forEach(idx => indices.push(idx));
+        }
+        if (indices.length === 0) {
+            return; // nothing to fade against
+        }
+        indices.sort((a, b) => a - b);
+        this._attackEntryIndices = indices;
+
+        // Build node opacity from edge opacities (max of incident edges)
+        const nodeMax = new Map();
+        for (const e of data.edges) {
+            const opacity = this.getEdgeOpacityValue(e);
+            if (e.src) {
+                const prev = nodeMax.get(e.src) ?? 0;
+                if (opacity > prev) nodeMax.set(e.src, opacity);
+            }
+            if (e.dst) {
+                const prev = nodeMax.get(e.dst) ?? 0;
+                if (opacity > prev) nodeMax.set(e.dst, opacity);
+            }
+        }
+        this._nodeOpacityMap = nodeMax;
+
+        // Debug summary to verify fading inputs
+        try {
+            const attackEdgesCount = data.edges.filter(e => e.is_reapr_attack_path).length;
+            const sample = indices.slice(0, 10);
+            let minOp = 1, maxOp = 0, zeroCount = 0;
+            for (let i = 0; i < Math.min(200, data.edges.length); i++) {
+                const op = this.getEdgeOpacityValue(data.edges[i]);
+                if (op < minOp) minOp = op;
+                if (op > maxOp) maxOp = op;
+                if (op === 0) zeroCount++;
+            }
+            console.debug('[REAPr Fading] attackIndices:', indices.length, 'attackEdges:', attackEdgesCount, 'sample:', sample, 'edgeOpacity[min,max,zeros]:', {minOp, maxOp, zeroCount});
+        } catch (e) {
+            // ignore debug errors
+        }
+    }
+
+    collectEntryIndices(edge) {
+        const entries = [];
+        const single = edge.entry_index;
+        if (Number.isFinite(single)) {
+            entries.push(single);
+        }
+        if (Array.isArray(edge.entry_indices)) {
+            edge.entry_indices.forEach(idx => {
+                if (Number.isFinite(idx)) {
+                    entries.push(idx);
+                }
+            });
+        }
+        if (Array.isArray(edge.original_edges)) {
+            edge.original_edges.forEach(orig => {
+                if (!orig || orig === edge) {
+                    return;
+                }
+                const childEntries = this.collectEntryIndices(orig);
+                childEntries.forEach(idx => entries.push(idx));
+            });
+        }
+        return entries;
+    }
+
+    /**
+     * Create a default node color object for a given group when no override is present.
+     */
+    getDefaultNodeColorForGroup(group) {
+        const map = {
+            process: { background: CONFIG.nodeColors['Process'], border: '#6B8E6B' },
+            file: { background: CONFIG.nodeColors['File'], border: '#B8860B' },
+            registry: { background: CONFIG.nodeColors['Registry'], border: '#4682B4' },
+            network: { background: CONFIG.nodeColors['Network'], border: '#DAA520' }
+        };
+        const base = map[group] || { background: CONFIG.nodeColors['default'], border: '#808080' };
+        return {
+            background: base.background,
+            border: base.border,
+            highlight: {
+                background: base.background,
+                border: '#000000'
+            }
+        };
+    }
+
+    /**
+     * Apply opacity to a node color definition by converting to RGBA values.
+     */
+    applyNodeColorOpacity(color, opacity = 1.0) {
+        const normalized = typeof color === 'string' ? {
+            background: color,
+            border: '#1b1b1b',
+            highlight: {
+                background: color,
+                border: '#000000'
+            }
+        } : {
+            ...color,
+            highlight: color.highlight ? { ...color.highlight } : undefined
+        };
+
+        const bg = normalized.background || '#999999';
+        const border = normalized.border || '#555555';
+        const highlight = normalized.highlight || {};
+
+        const safeOpacity = Math.max(0, Math.min(1, opacity));
+        const borderOpacity = safeOpacity > 0 ? Math.max(0.2, safeOpacity) : 0;
+
+        return {
+            ...normalized,
+            background: this.withAlpha(bg, safeOpacity),
+            border: this.withAlpha(border, borderOpacity),
+            highlight: {
+                ...highlight,
+                background: this.withAlpha(highlight.background || bg, 1.0),
+                border: highlight.border || border
+            }
+        };
+    }
+
+    /**
+     * Apply opacity to an edge color, returning a vis.js color object.
+     */
+    applyEdgeColorOpacity(color, opacity = 1.0) {
+        const safeOpacity = Math.max(0, Math.min(1, opacity));
+        const base = typeof color === 'string' ? { color } : {
+            ...color,
+            highlight: color.highlight && typeof color.highlight === 'object'
+                ? { ...color.highlight }
+                : color.highlight,
+            hover: color.hover && typeof color.hover === 'object'
+                ? { ...color.hover }
+                : color.hover
+        };
+
+        const resolveColor = value => {
+            if (!value) return '#848484';
+            if (typeof value === 'string') return value;
+            if (value.color) return value.color;
+            if (value.background) return value.background;
+            return '#848484';
+        };
+
+        const baseColor = resolveColor(base.color || color);
+        const highlightColor = resolveColor(base.highlight || baseColor);
+        const hoverColor = resolveColor(base.hover || baseColor);
+
+        const highlightOpacity = 1.0;
+        const hoverOpacity = Math.max(0.4, safeOpacity);
+
+        return {
+            color: this.withAlpha(baseColor, safeOpacity),
+            highlight: this.withAlpha(highlightColor, highlightOpacity),
+            hover: this.withAlpha(hoverColor, hoverOpacity),
+            inherit: false,
+            opacity: safeOpacity
+        };
+    }
+
+    /**
+     * Convert a color to an rgba string with the specified alpha.
+     */
+    withAlpha(color, alpha = 1.0) {
+        if (!color) return `rgba(132,132,132,${alpha})`;
+        const trimmed = color.trim();
+        if (trimmed.startsWith('rgba')) {
+            return trimmed.replace(/rgba\(([^)]+)\)/, (_, inner) => {
+                const parts = inner.split(',').map(p => p.trim());
+                const [r, g, b] = parts;
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+            });
+        }
+        if (trimmed.startsWith('rgb')) {
+            const inner = trimmed.slice(trimmed.indexOf('(') + 1, trimmed.indexOf(')'));
+            const parts = inner.split(',').map(p => p.trim());
+            const [r, g, b] = parts;
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        const { r, g, b } = this.hexToRgb(trimmed);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    /**
+     * Convert a hex color (#fff or #ffffff) to RGB components.
+     */
+    hexToRgb(hex) {
+        let normalized = hex.startsWith('#') ? hex.slice(1) : hex;
+        if (normalized.length === 3) {
+            normalized = normalized.split('').map(ch => ch + ch).join('');
+        }
+        const num = parseInt(normalized, 16);
+        const r = (num >> 16) & 255;
+        const g = (num >> 8) & 255;
+        const b = num & 255;
+        return { r, g, b };
+    }
+
+    /**
+     * Compute opacity for a node based on proximity; defaults to 1.0.
+     */
+    getNodeOpacityValue(nodeId) {
+        if (!DOMHelper.isChecked('reapr-analysis') || this._attackEntryIndices.length === 0) {
+            return 1.0;
+        }
+        return this._nodeOpacityMap.get(nodeId) ?? 1.0;
+    }
+
+    /**
+     * Compute opacity for an edge based on proximity to nearest attack-path edge.
+     */
+    getEdgeOpacityValue(edge) {
+        if (!DOMHelper.isChecked('reapr-analysis') || this._attackEntryIndices.length === 0) {
+            return 1.0;
+        }
+        // Attack-path edges are full opacity
+        if (edge.is_reapr_attack_path) return 1.0;
+        const entries = this.collectEntryIndices(edge);
+        if (!entries.length) return 1.0;
+        let minDistance = Infinity;
+        for (const idx of entries) {
+            const d = this.nearestDistanceToAttackIndex(idx);
+            if (d < minDistance) {
+                minDistance = d;
+                if (minDistance === 0) break;
+            }
+        }
+        if (!Number.isFinite(minDistance)) return 1.0;
+        return this.mapDistanceToOpacity(minDistance);
+    }
+
+    /**
+     * Binary-search the sorted attack indices to find minimum absolute distance to a value.
+     */
+    nearestDistanceToAttackIndex(value) {
+        const arr = this._attackEntryIndices;
+        let lo = 0, hi = arr.length - 1;
+        if (value <= arr[0]) return Math.abs(arr[0] - value);
+        if (value >= arr[hi]) return Math.abs(value - arr[hi]);
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const mv = arr[mid];
+            if (mv === value) return 0;
+            if (mv < value) lo = mid + 1; else hi = mid - 1;
+        }
+        // lo is the first index greater than value; hi is last less than value
+        const diffs = [];
+        if (lo < arr.length) diffs.push(Math.abs(arr[lo] - value));
+        if (hi >= 0) diffs.push(Math.abs(value - arr[hi]));
+        return Math.min(...diffs);
+    }
+
+    /**
+     * Map entry distance to opacity using 3% per ±entry, clamped at 70% minimum.
+     * 0 => 1.0; 1 => 0.97; 2 => 0.94; ...; min clamp => 0.70
+     */
+    mapDistanceToOpacity(distance) {
+        if (!Number.isFinite(distance) || distance <= 0) return 1.0;
+        const op = 1.0 - (0.03 * distance);
+        return Math.max(0.70, Math.min(1.0, op));
     }
 
     /**
@@ -243,6 +531,7 @@ class Visualization {
                 : normalized.startsWith('net') ? 'network'
                 : undefined;
 
+            const nodeOpacity = this.getNodeOpacityValue(node.id);
             const nodeObj = {
                 id: node.id,
                 label: displayLabel,
@@ -252,9 +541,8 @@ class Visualization {
                 originalLabel: node.label
             };
             const colorOverride = this.getNodeColor(node, group);
-            if (colorOverride) {
-                nodeObj.color = colorOverride;
-            }
+            const baseColor = colorOverride || this.getDefaultNodeColorForGroup(group);
+            nodeObj.color = this.applyNodeColorOpacity(baseColor, nodeOpacity);
             return nodeObj;
         });
     }
@@ -303,13 +591,15 @@ class Visualization {
 
             const from = edge.src ?? edge.from;
             const to = edge.dst ?? edge.to;
+            const edgeOpacity = this.getEdgeOpacityValue(edge);
+            const baseEdgeColor = this.getEdgeColor(edge, data) || '#848484';
             return {
                 id: edge.id || `${from}-${to}-${index}`,
                 from,
                 to,
                 label: label,
                 title: this.createEdgeTooltip(edge),
-                color: this.getEdgeColor(edge, data),
+                color: this.applyEdgeColorOpacity(baseEdgeColor, edgeOpacity),
                 width: this.getEdgeWidth(edge),
                 arrows: 'to'
             };
@@ -544,22 +834,45 @@ class Visualization {
 
     getReadableReaprLabel(label) {
         if (!label) return '';
-        return label.replace(/_/g, ' ').replace(/\b\w/g, (s) => s.toUpperCase());
+        return String(label).replace(/_/g, ' ').replace(/\b\w/g, (s) => s.toUpperCase());
+    }
+
+    /** Normalize raw REAPr label to canonical keys used in color map */
+    normalizeReaprLabel(label) {
+        if (!label) return '';
+        const raw = String(label).trim().toLowerCase();
+        // collapse whitespace/hyphen and underscores for robustness
+        const compact = raw.replace(/[\s-]+/g, '_');
+        if (compact === 'rootcause' || compact === 'root__cause') return 'root_cause';
+        // common synonyms or variants can be added here if needed
+        return compact;
     }
 
     getReaprNodeColor(node) {
         if (!DOMHelper.isChecked('reapr-analysis')) {
             return null;
         }
+
+        // Per REAPr methodology, only process nodes are labeled in the final label file
+        const normalizedType = this.normalizeNodeType(node.type);
+        if (normalizedType !== 'Process') {
+            return null;
+        }
+
         const annotations = node.reapr_annotations || [];
         if (!annotations.length) {
             return null;
         }
-        const label = annotations[0]?.label;
-        if (!label) {
+
+        // Prefer a priority reflecting methodology semantics
+        const priority = ['root_cause', 'malicious', 'contaminated', 'impact', 'benign'];
+        const labels = annotations.map(a => this.normalizeReaprLabel(a.label)).filter(Boolean);
+        const chosen = priority.find(l => labels.includes(l)) || labels[0];
+        if (!chosen) {
             return null;
         }
-        const background = this.reaprColorMap[label] || '#ff7043';
+
+        const background = this.reaprColorMap[chosen] || '#ff7043';
         return {
             background,
             border: '#1b1b1b',
@@ -574,12 +887,19 @@ class Visualization {
         if (!DOMHelper.isChecked('reapr-analysis')) {
             return null;
         }
+        // Only emphasize edges that REAPr marks as part of the attack path
+        if (!edge.is_reapr_attack_path) {
+            return null;
+        }
+
         const annotations = edge.reapr_annotations || [];
         if (!annotations.length) {
             return null;
         }
-        const prioritized = annotations.find(a => a.label === 'malicious') || annotations[0];
-        return this.reaprColorMap[prioritized.label] || '#ff7043';
+        const priority = ['malicious', 'root_cause', 'impact', 'contaminated', 'benign'];
+        const labels = annotations.map(a => this.normalizeReaprLabel(a.label)).filter(Boolean);
+        const chosen = priority.find(l => labels.includes(l)) || labels[0];
+        return this.reaprColorMap[chosen] || '#ff7043';
     }
 
     /**
@@ -662,7 +982,7 @@ class Visualization {
      * @returns {number} Width value
      */
     getEdgeWidth(edge) {
-        if (DOMHelper.isChecked('reapr-analysis') && edge.has_reapr_annotation) {
+        if (DOMHelper.isChecked('reapr-analysis') && edge.is_reapr_attack_path) {
             return Math.max(CONFIG.visualization.customEdgeWidths.defaultWidth + 2, 3);
         }
 
